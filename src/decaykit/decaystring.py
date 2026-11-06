@@ -4,13 +4,14 @@ A decay string looks like ``[B+ -> [K+ -> pi+ pi0] [J/psi -> mu+ mu-]]``:
 brackets group a decay, ``->`` separates a parent from its daughters, and a
 name is any run of characters that is neither a bracket nor whitespace.
 
-The ``extract_decay_*`` functions return a ``polars.Expr`` that can be dropped
-straight into ``DataFrame.with_columns``.
+``add_decay_columns`` parses the decay column of a ``DataFrame`` or
+``LazyFrame`` and adds the requested variants. ``count_decays`` is available as
+a ``polars.Expr`` for use in ``with_columns``.
 """
 
 import re
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from concurrent.futures import ProcessPoolExecutor
 from functools import cache, partial
 
@@ -35,6 +36,9 @@ _MASS_LOCK = threading.Lock()
 _TOKEN_RE = re.compile(r"\[|\]|[^\[\]\s]+")
 
 _SKIP = frozenset({"]", "->"})
+
+# A token that can never be the name of a decayed daughter.
+_NON_NAME = frozenset({"[", "]", "->"})
 
 _FSR = frozenset({"gammaF", "gammaP", "gammaI"})
 
@@ -159,6 +163,49 @@ def _final_daughters(block: str, stable: frozenset[str] = frozenset()) -> list[s
     return parts
 
 
+def _both_daughters(
+    tokens: list[str], stable: frozenset[str] = frozenset()
+) -> tuple[list[str], list[str]]:
+    """Return the prompt and final daughters in a single token walk.
+
+    This is `_prompt_daughters` and `_final_daughters` over the same tokens, so
+    extracting both modes pays for one walk instead of two.
+    """
+    prompt = []
+    final = []
+    depth = 0
+    i = 0
+    n = len(tokens)
+    while i < n:
+        token = tokens[i]
+        if token == "[":
+            name = tokens[i + 1] if i + 1 < n else None
+            # a direct daughter is the name of this group; its decay is not
+            # expanded for the prompt output
+            if depth == 0 and name is not None and name not in _NON_NAME:
+                prompt.append(name)
+            # a "stable" particle is a final-state leaf: keep it, drop its tree
+            if name is not None and name in stable:
+                final.append(name)
+                i = _skip_group(tokens, i)
+                continue
+            depth += 1
+            i += 1
+        elif token == "]":
+            depth -= 1
+            i += 1
+        elif token == "->":
+            i += 1
+        else:
+            if depth == 0:
+                prompt.append(token)
+            # a name followed by '->' is a parent, so only leaves are final
+            if i + 1 >= n or tokens[i + 1] != "->":
+                final.append(token)
+            i += 1
+    return prompt, final
+
+
 def _strip_fsr(result: str) -> str:
     """Remove the FSR/ISR photons from an assembled decay string."""
     return result.replace(" gammaF", "").replace(" gammaP", "").replace(" gammaI", "")
@@ -186,34 +233,71 @@ def _assemble(
     return f"{particle} -> {' '.join(daughters)}"
 
 
-def _apply_parser(
+def _raw_result(
+    particle: str, block: str, ignore_fsr: bool, sort_daughters: bool
+) -> str:
+    # the block is kept verbatim, so photons are removed from the string
+    # and a bracket-free block is still sorted the old way
+    result = f"{particle} -> {block}"
+    if ignore_fsr:
+        result = _strip_fsr(result)
+    if sort_daughters and "[" not in result:
+        result = rearrange_daughters(result, arrow_str="->")
+    return result
+
+
+def _apply_parser_multi(
     decay_str: str,
     particle: str,
-    mode: str,
+    modes: tuple[str, ...],
     stable: frozenset[str],
     ignore_fsr: bool,
     sort_daughters: bool,
     max_occurrences: int,
 ) -> list[str | None]:
-    results = []
-    for block in _find_blocks(decay_str, particle, max_occurrences):
-        if mode == "raw":
-            # the block is kept verbatim, so photons are removed from the string
-            # and a bracket-free block is still sorted the old way
-            result = f"{particle} -> {block}"
-            if ignore_fsr:
-                result = _strip_fsr(result)
-            if sort_daughters and "[" not in result:
-                result = rearrange_daughters(result, arrow_str="->")
-        else:
-            daughters = (
-                _prompt_daughters(block)
-                if mode == "prompt"
-                else _final_daughters(block, stable)
+    """Parse every requested mode, sharing the block and token walks.
+
+    The result is mode-major and padded with ``None`` like a single-mode parse:
+    all occurrences of the first mode, then all occurrences of the second, ...
+    """
+    blocks = _find_blocks(decay_str, particle, max_occurrences)
+    missing = max_occurrences - len(blocks)
+    want_prompt = "prompt" in modes
+    want_final = "final" in modes
+    want_raw = "raw" in modes
+    columns: dict[str, list[str]] = {mode: [] for mode in modes}
+
+    for block in blocks:
+        if want_raw:
+            columns["raw"].append(
+                _raw_result(particle, block, ignore_fsr, sort_daughters)
             )
-            result = _assemble(particle, daughters, ignore_fsr, sort_daughters)
-        results.append(result)
-    return results + [None] * (max_occurrences - len(results))
+        if want_prompt or want_final:
+            prompt_parts: list[str] = []
+            final_parts: list[str] = []
+            if want_prompt and want_final:
+                # one tokenization and one walk for both variants
+                prompt_parts, final_parts = _both_daughters(
+                    _TOKEN_RE.findall(block), stable
+                )
+            elif want_prompt:
+                prompt_parts = _prompt_daughters(block)
+            else:
+                final_parts = _final_daughters(block, stable)
+            if want_prompt:
+                columns["prompt"].append(
+                    _assemble(particle, prompt_parts, ignore_fsr, sort_daughters)
+                )
+            if want_final:
+                columns["final"].append(
+                    _assemble(particle, final_parts, ignore_fsr, sort_daughters)
+                )
+
+    results: list[str | None] = []
+    for mode in modes:
+        results.extend(columns[mode])
+        results.extend([None] * missing)
+    return results
 
 
 def _parse_chunk(
@@ -249,42 +333,44 @@ def _map_with_workers(
     ).to_struct(series.name)
 
 
-def _expr(
+def _parse_expr(
     col_name: str,
     particle: str,
-    mode: str,
+    modes: tuple[str, ...],
     n_workers: int,
     ignore_fsr: bool,
     sort_daughters: bool,
     max_occurrences: int,
     stable: list[str] | None = None,
-) -> pl.Expr:
+) -> tuple[pl.Expr, list[str]]:
+    """Return the struct expression that parses all modes, and its field names."""
     if max_occurrences < 1:
         raise ValueError(f"max_occurrences must be >= 1, got {max_occurrences}")
-    name = f"{particle.replace('*', 'star')}_{mode}"
-    names = [name] + [f"{name}_{k}" for k in range(2, max_occurrences + 1)]
+    base = particle.replace("*", "star")
+    names = []
+    for mode in modes:
+        name = f"{base}_{mode}"
+        names.append(name)
+        names.extend(f"{name}_{k}" for k in range(2, max_occurrences + 1))
     parser = partial(
-        _apply_parser,
-        mode=mode,
+        _apply_parser_multi,
+        modes=modes,
         stable=frozenset(stable or ()),
         ignore_fsr=ignore_fsr,
         sort_daughters=sort_daughters,
         max_occurrences=max_occurrences,
     )
-    return (
-        pl.col(col_name)
-        .map_batches(
-            partial(
-                _map_with_workers,
-                parser=parser,
-                particle=particle,
-                n_workers=n_workers,
-                names=names,
-            ),
-            return_dtype=pl.Struct({n: pl.String for n in names}),
-        )
-        .struct.unnest()
+    expr = pl.col(col_name).map_batches(
+        partial(
+            _map_with_workers,
+            parser=parser,
+            particle=particle,
+            n_workers=n_workers,
+            names=names,
+        ),
+        return_dtype=pl.Struct({n: pl.String for n in names}),
     )
+    return expr, names
 
 
 def count_decays(
@@ -300,79 +386,61 @@ def count_decays(
     )
 
 
-def extract_decay_raw(
+def _check_modes(modes: Sequence[str]) -> tuple[str, ...]:
+    # a repeated mode would ask for the same column twice; keep the first
+    modes = tuple(dict.fromkeys(modes))
+    if not modes:
+        raise ValueError("modes must not be empty")
+    unknown = [mode for mode in modes if mode not in ("final", "prompt", "raw")]
+    if unknown:
+        raise ValueError(f"unknown mode(s): {', '.join(unknown)}")
+    return modes
+
+
+def add_decay_columns[FrameT: (pl.DataFrame, pl.LazyFrame)](
+    frame: FrameT,
     col_name: str = "__MCDecayString__",
     particle: str = "B+",
-    n_workers: int = 1,
-    ignore_fsr: bool = True,
-    sort_daughters: bool = True,
-    max_occurrences: int = 1,
-) -> pl.Expr:
-    """Return 'particle -> <raw block>' preserving the full daughter string as-is.
-
-    The first ``max_occurrences`` decays of ``particle`` go into '<particle>_raw',
-    '<particle>_raw_2', ...; columns without a matching decay are None.
-    """
-    return _expr(
-        col_name,
-        particle,
-        "raw",
-        n_workers,
-        ignore_fsr,
-        sort_daughters,
-        max_occurrences,
-    )
-
-
-def extract_decay_prompt(
-    col_name: str = "__MCDecayString__",
-    particle: str = "B+",
-    n_workers: int = 1,
-    ignore_fsr: bool = True,
-    sort_daughters: bool = True,
-    max_occurrences: int = 1,
-) -> pl.Expr:
-    """Return 'particle -> d1 d2 ...' listing only direct daughters.
-
-    Intermediate decays are collapsed to their parent name.
-    The first ``max_occurrences`` decays of ``particle`` go into '<particle>_prompt',
-    '<particle>_prompt_2', ...; columns without a matching decay are None.
-    """
-    return _expr(
-        col_name,
-        particle,
-        "prompt",
-        n_workers,
-        ignore_fsr,
-        sort_daughters,
-        max_occurrences,
-    )
-
-
-def extract_decay_final(
-    col_name: str = "__MCDecayString__",
-    particle: str = "B+",
+    modes: Sequence[str] = ("final", "prompt", "raw"),
     n_workers: int = 1,
     ignore_fsr: bool = True,
     sort_daughters: bool = True,
     consider_as_stable: list[str] | None = None,
     max_occurrences: int = 1,
-) -> pl.Expr:
-    """Return 'particle -> d1 d2 ...' listing the leaves of the decay tree.
+) -> FrameT:
+    """Add the requested decay variants, parsing each event only once.
 
-    Recurses through all intermediate decays.
+    ``modes`` selects which of ``final``, ``prompt`` and ``raw`` to emit; the
+    columns appear in that order. The first ``max_occurrences`` decays of
+    ``particle`` go into '<particle>_<mode>', '<particle>_<mode>_2', ...;
+    columns without a matching decay are None.
+
     Particles in ``consider_as_stable`` (e.g. ["pi0", "K_S0"]) are kept as-is
-    and their decays are not expanded.
-    The first ``max_occurrences`` decays of ``particle`` go into '<particle>_final',
-    '<particle>_final_2', ...; columns without a matching decay are None.
+    in the ``final`` variant instead of expanding their decays.
+
+    Works on both ``DataFrame`` and ``LazyFrame``; a lazy query parses each
+    batch exactly once.
     """
-    return _expr(
+    expr, names = _parse_expr(
         col_name,
         particle,
-        "final",
+        _check_modes(modes),
         n_workers,
         ignore_fsr,
         sort_daughters,
         max_occurrences,
         stable=consider_as_stable,
     )
+    existing = set(
+        frame.collect_schema().names()
+        if isinstance(frame, pl.LazyFrame)
+        else frame.columns
+    )
+    tmp = "__decaykit_parsed__"
+    while tmp in existing:
+        tmp = f"_{tmp}"
+    parsed = frame.with_columns(expr.alias(tmp))
+    fields = [pl.col(tmp).struct.field(name).alias(name) for name in names]
+    # with_columns replaces columns that already exist, so rerunning on a frame
+    # that already has these variants stays idempotent
+    return parsed.with_columns(*fields).drop(tmp)

@@ -10,13 +10,9 @@ import polars as pl
 import polars_root as pr
 import uproot
 
-from .decaystring import extract_decay_final, extract_decay_prompt, extract_decay_raw
+from .decaystring import add_decay_columns
 
-_MODES = {
-    "final": extract_decay_final,
-    "prompt": extract_decay_prompt,
-    "raw": extract_decay_raw,
-}
+_MODES = ("final", "prompt", "raw")
 
 # Tree written by belle2 VariablesToNtuple. A ROOT input that already has it
 # can be read without -t/--tree.
@@ -138,11 +134,11 @@ def main(argv: list[str] | None = None) -> None:
     if not in_place:
         _confirm_overwrite(output, args.yes, parser)
 
-    lf = lf.with_columns(
-        *[
-            _MODES[mode](particle=args.particle, n_workers=args.n_workers)
-            for mode in modes
-        ]
+    lf = add_decay_columns(
+        lf,
+        particle=args.particle,
+        modes=modes,
+        n_workers=args.n_workers,
     )
     _sink_parquet(lf, output)
     print(f"wrote {output}")

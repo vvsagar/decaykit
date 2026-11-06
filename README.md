@@ -40,14 +40,11 @@ decaykit vars.root                   # a 'variables' tree needs no -t
 ```python
 import polars as pl
 
-from decaykit import extract_decay_final, extract_decay_prompt
+from decaykit import add_decay_columns
 
 df = pl.DataFrame({"__MCDecayString__": ["[B+ -> [K+ -> pi+ pi0] [J/psi -> mu+ mu-]]"]})
 
-df.with_columns(
-    extract_decay_prompt(particle="B+"),  # direct daughters
-    extract_decay_final(particle="B+"),  # leaves of the decay tree
-)
+df = add_decay_columns(df, modes=("prompt", "final"), particle="B+")
 # shape: (1, 3)
 # ┌─────────────────────────────────┬────────────────┬───────────────────────┐
 # │ __MCDecayString__               ┆ B+_prompt      ┆ B+_final              │
@@ -55,4 +52,7 @@ df.with_columns(
 # │ [B+ -> [K+ -> pi+ pi0] [J/psi… ┆ B+ -> J/psi K+ ┆ B+ -> pi+ pi0 mu+ mu- │
 # └─────────────────────────────────┴────────────────┴───────────────────────┘
 ```
+
+`add_decay_columns` works on both `DataFrame` and `LazyFrame`. It parses each
+event once regardless of how many variants are requested.
 

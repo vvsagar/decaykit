@@ -4,10 +4,8 @@ import polars as pl
 import pytest
 
 from decaykit import (
+    add_decay_columns,
     count_decays,
-    extract_decay_final,
-    extract_decay_prompt,
-    extract_decay_raw,
     get_mass,
     rearrange_daughters,
 )
@@ -24,18 +22,22 @@ def frame(*strings: str | None) -> pl.DataFrame:
     return pl.DataFrame({COL: list(strings)})
 
 
-def column(strings: pl.Series | list[str | None], expr: pl.Expr) -> list[str | None]:
-    return frame(*strings).select(expr).to_series().to_list()
+def column(
+    strings: pl.Series | list[str | None],
+    mode: str = "raw",
+    particle: str = "B+",
+    **kwargs,
+) -> list[str | None]:
+    out = add_decay_columns(frame(*strings), modes=(mode,), particle=particle, **kwargs)
+    return out[f"{particle.replace('*', 'star')}_{mode}"].to_list()
 
 
 def test_public_api_is_exported() -> None:
     import decaykit
 
     assert set(decaykit.__all__) == {
+        "add_decay_columns",
         "count_decays",
-        "extract_decay_raw",
-        "extract_decay_final",
-        "extract_decay_prompt",
         "get_mass",
         "rearrange_daughters",
     }
@@ -51,53 +53,57 @@ def test_count_decays_other_particle() -> None:
     assert out["B0_count"].to_list() == [1]
 
 
-def test_extract_decay_keeps_the_block_verbatim() -> None:
-    assert column([SIMPLE], extract_decay_raw()) == [
+def test_add_decay_columns_adds_all_modes() -> None:
+    out = add_decay_columns(frame(SIMPLE))
+    assert out.columns == [COL, "B+_final", "B+_prompt", "B+_raw"]
+    assert out["B+_final"].to_list() == ["B+ -> pi+ pi0 mu+ mu-"]
+    assert out["B+_prompt"].to_list() == ["B+ -> J/psi K+"]
+    assert out["B+_raw"].to_list() == [
         "B+ -> [K+ -> pi+ pi0] [J/psi -> mu+ mu-]"
     ]
 
 
-def test_extract_decay_sorts_a_bracket_free_block() -> None:
+def test_add_decay_columns_keeps_the_block_verbatim() -> None:
+    assert column([SIMPLE]) == ["B+ -> [K+ -> pi+ pi0] [J/psi -> mu+ mu-]"]
+
+
+def test_add_decay_columns_sorts_a_bracket_free_block() -> None:
     decay = "[B+ -> pi+ K+]"
-    assert column([decay], extract_decay_raw()) == ["B+ -> K+ pi+"]
-    assert column([decay], extract_decay_raw(sort_daughters=False)) == ["B+ -> pi+ K+"]
+    assert column([decay]) == ["B+ -> K+ pi+"]
+    assert column([decay], sort_daughters=False) == ["B+ -> pi+ K+"]
 
 
-def test_extract_decay_strips_fsr_by_default() -> None:
-    assert column([FSR], extract_decay_raw()) == [
-        "B+ -> [K+ -> pi+ pi0] [J/psi -> mu+ mu-]"
-    ]
+def test_add_decay_columns_strips_fsr_by_default() -> None:
+    assert column([FSR]) == ["B+ -> [K+ -> pi+ pi0] [J/psi -> mu+ mu-]"]
 
 
-def test_extract_decay_keeps_fsr_when_asked() -> None:
-    assert column([FSR], extract_decay_raw(ignore_fsr=False)) == [
+def test_add_decay_columns_keeps_fsr_when_asked() -> None:
+    assert column([FSR], ignore_fsr=False) == [
         "B+ -> [K+ -> pi+ pi0 gammaF] [J/psi -> mu+ mu- gammaP gammaI]"
     ]
 
 
-def test_extract_decay_prompt_lists_direct_daughters() -> None:
-    assert column([SIMPLE], extract_decay_prompt()) == ["B+ -> J/psi K+"]
-    assert column([SIMPLE], extract_decay_prompt(sort_daughters=False)) == [
-        "B+ -> K+ J/psi"
-    ]
+def test_add_decay_columns_prompt_lists_direct_daughters() -> None:
+    assert column([SIMPLE], "prompt") == ["B+ -> J/psi K+"]
+    assert column([SIMPLE], "prompt", sort_daughters=False) == ["B+ -> K+ J/psi"]
 
 
-def test_extract_decay_final_lists_leaves() -> None:
-    assert column([SIMPLE], extract_decay_final()) == ["B+ -> pi+ pi0 mu+ mu-"]
+def test_add_decay_columns_final_lists_leaves() -> None:
+    assert column([SIMPLE], "final") == ["B+ -> pi+ pi0 mu+ mu-"]
 
 
-def test_extract_decay_final_keeps_stable_particles() -> None:
-    final = extract_decay_final(particle="B0", consider_as_stable=["D0"])
-    assert column([NESTED], final) == ["B0 -> D0 pi- pi+"]
+def test_add_decay_columns_final_keeps_stable_particles() -> None:
+    assert column(
+        [NESTED], "final", particle="B0", consider_as_stable=["D0"]
+    ) == ["B0 -> D0 pi- pi+"]
 
 
-def test_extract_decay_final_recurses_without_stable_particles() -> None:
-    final = extract_decay_final(particle="B0")
-    assert column([NESTED], final) == ["B0 -> K- pi+ pi- pi+"]
+def test_add_decay_columns_final_recurses_without_stable_particles() -> None:
+    assert column([NESTED], "final", particle="B0") == ["B0 -> K- pi+ pi- pi+"]
 
 
 def test_max_occurrences_creates_columns_and_pads_with_none() -> None:
-    out = frame(TWO, SIMPLE).with_columns(extract_decay_raw(max_occurrences=2))
+    out = add_decay_columns(frame(TWO, SIMPLE), modes=("raw",), max_occurrences=2)
     assert out["B+_raw"].to_list() == [
         "B+ -> [K+ -> pi+ pi0] J/psi",
         "B+ -> [K+ -> pi+ pi0] [J/psi -> mu+ mu-]",
@@ -108,20 +114,66 @@ def test_max_occurrences_creates_columns_and_pads_with_none() -> None:
     ]
 
 
+def test_max_occurrences_is_mode_major() -> None:
+    out = add_decay_columns(
+        frame(TWO), modes=("raw", "prompt"), max_occurrences=2
+    )
+    assert out.columns == [
+        COL,
+        "B+_raw",
+        "B+_raw_2",
+        "B+_prompt",
+        "B+_prompt_2",
+    ]
+    assert out["B+_prompt"].to_list() == ["B+ -> J/psi K+"]
+    assert out["B+_prompt_2"].to_list() == ["B+ -> J/psi K+"]
+
+
 def test_max_occurrences_must_be_positive() -> None:
     with pytest.raises(ValueError, match="max_occurrences must be >= 1"):
-        extract_decay_raw(max_occurrences=0)
+        add_decay_columns(frame(SIMPLE), modes=("raw",), max_occurrences=0)
 
 
 def test_no_match_and_null_input_give_none() -> None:
-    out = frame("[B0 -> K+ pi-]", None).with_columns(extract_decay_raw())
+    out = add_decay_columns(frame("[B0 -> K+ pi-]", None), modes=("raw",))
     assert out["B+_raw"].to_list() == [None, None]
+
+
+def test_modes_must_be_known_and_non_empty() -> None:
+    with pytest.raises(ValueError, match="modes must not be empty"):
+        add_decay_columns(frame(SIMPLE), modes=())
+    with pytest.raises(ValueError, match="unknown mode"):
+        add_decay_columns(frame(SIMPLE), modes=("final", "nope"))
+
+
+def test_duplicate_modes_are_ignored() -> None:
+    out = add_decay_columns(frame(SIMPLE), modes=("final", "final"))
+    assert out.columns == [COL, "B+_final"]
+
+
+def test_add_decay_columns_replaces_existing_variants() -> None:
+    df = frame(SIMPLE).with_columns(pl.lit("old").alias("B+_final"))
+    out = add_decay_columns(df, modes=("final",))
+    assert out.columns == [COL, "B+_final"]
+    assert out["B+_final"].to_list() == ["B+ -> pi+ pi0 mu+ mu-"]
+
+
+def test_add_decay_columns_does_not_clobber_a_temporary_name() -> None:
+    df = pl.DataFrame(
+        {
+            COL: [SIMPLE],
+            "__decaykit_parsed__": [42],
+        }
+    )
+    out = add_decay_columns(df, modes=("final",))
+    assert out["__decaykit_parsed__"].to_list() == [42]
+    assert out["B+_final"].to_list() == ["B+ -> pi+ pi0 mu+ mu-"]
 
 
 def test_multiprocessing_matches_single_worker() -> None:
     strings = [SIMPLE, NESTED, TWO, FSR, None] * 4
-    single = column(strings, extract_decay_final(n_workers=1))
-    multi = column(strings, extract_decay_final(n_workers=2))
+    single = column(strings, "final", n_workers=1)
+    multi = column(strings, "final", n_workers=2)
     assert single == multi
 
 
@@ -142,7 +194,7 @@ def test_get_mass_handles_known_but_invalid_pdgid() -> None:
     # ParticleNotFound/MatchingIDNotFound; the lookup must still yield 0.
     assert get_mass("Xsu") == 0
     assert get_mass("anti-Xss") == 0
-    assert column(["[B+ -> K+ Xsu]"], extract_decay_prompt()) == ["B+ -> K+ Xsu"]
+    assert column(["[B+ -> K+ Xsu]"], "prompt") == ["B+ -> K+ Xsu"]
 
 
 def test_get_mass_is_thread_safe() -> None:
