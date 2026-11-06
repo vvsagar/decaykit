@@ -136,6 +136,15 @@ def test_get_mass() -> None:
     assert get_mass("not_a_particle") == 0
 
 
+def test_get_mass_handles_known_but_invalid_pdgid() -> None:
+    # EvtGen's exotic X states map to PDGIDs that particle flags
+    # is_valid=False, so from_pdgid raises InvalidParticle rather than
+    # ParticleNotFound/MatchingIDNotFound; the lookup must still yield 0.
+    assert get_mass("Xsu") == 0
+    assert get_mass("anti-Xss") == 0
+    assert column(["[B+ -> K+ Xsu]"], extract_decay_prompt()) == ["B+ -> K+ Xsu"]
+
+
 def test_get_mass_is_thread_safe() -> None:
     # particle's lazy lookup tables are not thread-safe, and polars evaluates
     # expressions in parallel; a race must not poison the cache with mass 0.

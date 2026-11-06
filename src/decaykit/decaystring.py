@@ -15,7 +15,7 @@ from concurrent.futures import ProcessPoolExecutor
 from functools import cache, partial
 
 import polars as pl
-from particle import Particle, ParticleNotFound
+from particle import InvalidParticle, Particle, ParticleNotFound
 from particle.exceptions import MatchingIDNotFound
 
 _CHUNK_SIZE = 50_000
@@ -52,7 +52,7 @@ def get_mass(evtgen_name: str, ignore_error: bool = True) -> float:
             return 0
         else:
             return mass
-    except (ParticleNotFound, MatchingIDNotFound):
+    except (InvalidParticle, ParticleNotFound, MatchingIDNotFound):
         if not ignore_error:
             print(f"mass not obtained for {evtgen_name}")
         return 0
