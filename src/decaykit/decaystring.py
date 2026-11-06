@@ -1,6 +1,8 @@
 """Parse EvtGen decay strings and expose them as Polars expressions.
 
-A decay string looks like ``[B+ -> [K+ -> pi+ pi0] [J/psi -> mu+ mu-]]``:
+A decay string looks like ``Upsilon(4S) -> [B+ -> [J/psi -> e+ e-] K+ pi+ pi-]
+[B- -> [D_s+ -> K+ K- pi+ [pi0 -> gamma gamma]] pi- K-]``:
+
 brackets group a decay, ``->`` separates a parent from its daughters, and a
 name is any run of characters that is neither a bracket nor whitespace.
 

@@ -8,22 +8,39 @@ import uproot
 from decaykit.cli import main
 
 COL = "__MCDecayString__"
-SIMPLE = "[B+ -> [K+ -> pi+ pi0] [J/psi -> mu+ mu-]]"
-NESTED = "[B0 -> [D*- -> [D0 -> K- pi+] pi-] pi+]"
-TWO = "[B+ -> [K+ -> pi+ pi0] J/psi] [B+ -> [K+ -> pi+ pi0] [J/psi -> mu+ mu-]]"
-FSR = "[B+ -> [K+ -> pi+ pi0 gammaF] [J/psi -> mu+ mu- gammaP gammaI]]"
+
+# Real events from Belle_exp55_06_charged_tree_0.pq.
+REAL = (
+    "Upsilon(4S) -> [B+ -> [J/psi -> e+ e-] K+ pi+ pi-] "
+    "[B- -> [D_s+ -> K+ K- pi+ [pi0 -> gamma gamma]] pi- K-]"
+)
+TWO_PI0 = (
+    "Upsilon(4S) -> [B+ -> [anti-D0 -> K+ pi-] e+ nu_e] "
+    "[B- -> [D_s+ -> K+ K- pi+ [pi0 -> gamma gamma]] pi- K- "
+    "[pi0 -> gamma gamma]]"
+)
+UNSORTED_D0 = (
+    "Upsilon(4S) -> [B+ -> [anti-D0 -> K+ mu- anti-nu_mu] e+ nu_e] "
+    "[B- -> [D_s*- -> [D_s- -> [K0 -> K_L0] K- pi- pi+] gamma] "
+    "[D0 -> pi- K+ pi+ pi-]]"
+)
+# REAL with the radiative photons EvtGen can attach.
+RADIATIVE = (
+    "Upsilon(4S) -> [B+ -> [J/psi -> e+ e- gammaP gammaI] K+ pi+ pi- gammaF] "
+    "[B- -> [D_s+ -> K+ K- pi+ [pi0 -> gamma gamma]] pi- K-]"
+)
 
 
 def write_input(tmp_path):
     path = tmp_path / "in.parquet"
-    pl.DataFrame({COL: [SIMPLE], "x": [1]}).write_parquet(path)
+    pl.DataFrame({COL: [REAL], "x": [1]}).write_parquet(path)
     return path
 
 
 def write_root(tmp_path, tree="tree"):
     path = tmp_path / "in.root"
     with uproot.recreate(path) as f:
-        f[tree] = {COL: np.array([SIMPLE]), "x": np.array([1])}
+        f[tree] = {COL: np.array([REAL]), "x": np.array([1])}
     return path
 
 
@@ -40,9 +57,9 @@ def test_in_place_adds_all_modes(tmp_path):
     df = pl.read_parquet(path)
     assert df.columns == [COL, "x", "B+_final", "B+_prompt", "B+_raw"]
     assert df["x"].to_list() == [1]
-    assert df["B+_final"].to_list() == ["B+ -> pi+ pi0 mu+ mu-"]
-    assert df["B+_prompt"].to_list() == ["B+ -> J/psi K+"]
-    assert df["B+_raw"].to_list() == ["B+ -> [K+ -> pi+ pi0] [J/psi -> mu+ mu-]"]
+    assert df["B+_final"].to_list() == ["B+ -> K+ pi+ pi- e+ e-"]
+    assert df["B+_prompt"].to_list() == ["B+ -> J/psi K+ pi+ pi-"]
+    assert df["B+_raw"].to_list() == ["B+ -> [J/psi -> e+ e-] K+ pi+ pi-"]
 
 
 def test_output_keeps_input_untouched(tmp_path):
@@ -81,8 +98,8 @@ def test_n_workers_matches_single_worker(tmp_path):
     main([str(path), "--n-workers", "2"])
 
     df = pl.read_parquet(path)
-    assert df["B+_final"].to_list() == ["B+ -> pi+ pi0 mu+ mu-"]
-    assert df["B+_prompt"].to_list() == ["B+ -> J/psi K+"]
+    assert df["B+_final"].to_list() == ["B+ -> K+ pi+ pi- e+ e-"]
+    assert df["B+_prompt"].to_list() == ["B+ -> J/psi K+ pi+ pi-"]
 
 
 def test_n_workers_must_be_positive(tmp_path):
@@ -99,9 +116,9 @@ def test_root_input_writes_sibling_parquet(tmp_path):
 
     df = pl.read_parquet(path.parent / f"{path.stem}_tree.pq")
     assert df.columns == [COL, "x", "B+_final", "B+_prompt", "B+_raw"]
-    assert df[COL].to_list() == [SIMPLE]
-    assert df["B+_final"].to_list() == ["B+ -> pi+ pi0 mu+ mu-"]
-    assert df["B+_prompt"].to_list() == ["B+ -> J/psi K+"]
+    assert df[COL].to_list() == [REAL]
+    assert df["B+_final"].to_list() == ["B+ -> K+ pi+ pi- e+ e-"]
+    assert df["B+_prompt"].to_list() == ["B+ -> J/psi K+ pi+ pi-"]
     assert df["x"].to_list() == [1]
 
 
@@ -208,23 +225,23 @@ def test_interactive_overwrite_can_be_declined(tmp_path, monkeypatch):
 def test_column_selects_the_input_column(tmp_path):
     column = "DecayString"
     path = tmp_path / "in.parquet"
-    pl.DataFrame({column: [SIMPLE], "x": [1]}).write_parquet(path)
+    pl.DataFrame({column: [REAL], "x": [1]}).write_parquet(path)
 
     main([str(path), "--column", column, "--mode", "final"])
 
     df = pl.read_parquet(path)
     assert df.columns == [column, "x", "B+_final"]
-    assert df["B+_final"].to_list() == ["B+ -> pi+ pi0 mu+ mu-"]
+    assert df["B+_final"].to_list() == ["B+ -> K+ pi+ pi- e+ e-"]
 
 
 @pytest.mark.parametrize("flag", ["--stable", "--consider-as-stable"])
 def test_stable_particles_are_kept(tmp_path, flag):
     path = tmp_path / "in.parquet"
-    pl.DataFrame({COL: [NESTED]}).write_parquet(path)
+    pl.DataFrame({COL: [REAL]}).write_parquet(path)
 
-    main([str(path), "--particle", "B0", "--mode", "final", flag, "D0"])
+    main([str(path), "--particle", "B-", "--mode", "final", flag, "D_s+"])
 
-    assert pl.read_parquet(path)["B0_final"].to_list() == ["B0 -> D0 pi- pi+"]
+    assert pl.read_parquet(path)["B-_final"].to_list() == ["B- -> D_s+ K- pi-"]
 
 
 def test_stable_requires_the_final_mode(tmp_path):
@@ -236,19 +253,26 @@ def test_stable_requires_the_final_mode(tmp_path):
 
 def test_max_occurrences_adds_columns(tmp_path):
     path = tmp_path / "in.parquet"
-    pl.DataFrame({COL: [TWO, SIMPLE]}).write_parquet(path)
+    pl.DataFrame({COL: [TWO_PI0, REAL]}).write_parquet(path)
 
-    main([str(path), "--mode", "raw", "--max-occurrences", "2"])
+    main(
+        [
+            str(path),
+            "--particle",
+            "pi0",
+            "--mode",
+            "raw",
+            "--max-occurrences",
+            "2",
+        ]
+    )
 
     df = pl.read_parquet(path)
-    assert df["B+_raw"].to_list() == [
-        "B+ -> [K+ -> pi+ pi0] J/psi",
-        "B+ -> [K+ -> pi+ pi0] [J/psi -> mu+ mu-]",
+    assert df["pi0_raw"].to_list() == [
+        "pi0 -> gamma gamma",
+        "pi0 -> gamma gamma",
     ]
-    assert df["B+_raw_2"].to_list() == [
-        "B+ -> [K+ -> pi+ pi0] [J/psi -> mu+ mu-]",
-        None,
-    ]
+    assert df["pi0_raw_2"].to_list() == ["pi0 -> gamma gamma", None]
 
 
 def test_max_occurrences_must_be_positive(tmp_path):
@@ -261,19 +285,19 @@ def test_max_occurrences_must_be_positive(tmp_path):
 @pytest.mark.parametrize(
     ("flags", "expected"),
     [
-        ([], "B+ -> [K+ -> pi+ pi0] [J/psi -> mu+ mu-]"),
-        (["--keep-isr"], "B+ -> [K+ -> pi+ pi0] [J/psi -> mu+ mu- gammaI]"),
-        (["--keep-fsr"], "B+ -> [K+ -> pi+ pi0 gammaF] [J/psi -> mu+ mu-]"),
-        (["--keep-photos"], "B+ -> [K+ -> pi+ pi0] [J/psi -> mu+ mu- gammaP]"),
+        ([], "B+ -> [J/psi -> e+ e-] K+ pi+ pi-"),
+        (["--keep-isr"], "B+ -> [J/psi -> e+ e- gammaI] K+ pi+ pi-"),
+        (["--keep-fsr"], "B+ -> [J/psi -> e+ e-] K+ pi+ pi- gammaF"),
+        (["--keep-photos"], "B+ -> [J/psi -> e+ e- gammaP] K+ pi+ pi-"),
         (
             ["--keep-isr", "--keep-fsr", "--keep-photos"],
-            "B+ -> [K+ -> pi+ pi0 gammaF] [J/psi -> mu+ mu- gammaP gammaI]",
+            "B+ -> [J/psi -> e+ e- gammaP gammaI] K+ pi+ pi- gammaF",
         ),
     ],
 )
 def test_photon_flags_select_individual_photon_kinds(tmp_path, flags, expected):
     path = tmp_path / "in.parquet"
-    pl.DataFrame({COL: [FSR]}).write_parquet(path)
+    pl.DataFrame({COL: [RADIATIVE]}).write_parquet(path)
 
     main([str(path), "--mode", "raw", *flags])
 
@@ -282,19 +306,20 @@ def test_photon_flags_select_individual_photon_kinds(tmp_path, flags, expected):
 
 def test_no_sort_preserves_daughter_order(tmp_path):
     path = tmp_path / "in.parquet"
-    pl.DataFrame({COL: ["[B+ -> pi+ K+]"]}).write_parquet(path)
+    pl.DataFrame({COL: [UNSORTED_D0]}).write_parquet(path)
 
-    main([str(path), "--mode", "raw", "--no-sort"])
+    main([str(path), "--particle", "D0", "--mode", "raw", "--no-sort"])
 
-    assert pl.read_parquet(path)["B+_raw"].to_list() == ["B+ -> pi+ K+"]
+    assert pl.read_parquet(path)["D0_raw"].to_list() == ["D0 -> pi- K+ pi+ pi-"]
 
 
 def test_count_adds_a_count_column(tmp_path):
     path = tmp_path / "in.parquet"
-    pl.DataFrame({COL: [TWO], "x": [1]}).write_parquet(path)
+    pl.DataFrame({COL: [TWO_PI0], "x": [1]}).write_parquet(path)
 
-    main([str(path), "--mode", "final", "--count"])
+    main([str(path), "--particle", "pi0", "--mode", "final", "--count"])
 
     df = pl.read_parquet(path)
-    assert df.columns == [COL, "x", "B+_count", "B+_final"]
-    assert df["B+_count"].to_list() == [2]
+    assert df.columns == [COL, "x", "pi0_count", "pi0_final"]
+    assert df["pi0_count"].to_list() == [2]
+    assert df["pi0_final"].to_list() == ["pi0 -> gamma gamma"]

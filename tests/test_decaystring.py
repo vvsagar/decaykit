@@ -12,10 +12,27 @@ from decaykit import (
 
 COL = "__MCDecayString__"
 
-SIMPLE = "[B+ -> [K+ -> pi+ pi0] [J/psi -> mu+ mu-]]"
-NESTED = "[B0 -> [D*- -> [D0 -> K- pi+] pi-] pi+]"
-TWO = "[B+ -> [K+ -> pi+ pi0] J/psi] [B+ -> [K+ -> pi+ pi0] [J/psi -> mu+ mu-]]"
-FSR = "[B+ -> [K+ -> pi+ pi0 gammaF] [J/psi -> mu+ mu- gammaP gammaI]]"
+# Real events from Belle_exp55_06_charged_tree_0.pq.
+REAL = (
+    "Upsilon(4S) -> [B+ -> [J/psi -> e+ e-] K+ pi+ pi-] "
+    "[B- -> [D_s+ -> K+ K- pi+ [pi0 -> gamma gamma]] pi- K-]"
+)
+TWO_PI0 = (
+    "Upsilon(4S) -> [B+ -> [anti-D0 -> K+ pi-] e+ nu_e] "
+    "[B- -> [D_s+ -> K+ K- pi+ [pi0 -> gamma gamma]] pi- K- "
+    "[pi0 -> gamma gamma]]"
+)
+UNSORTED_D0 = (
+    "Upsilon(4S) -> [B+ -> [anti-D0 -> K+ mu- anti-nu_mu] e+ nu_e] "
+    "[B- -> [D_s*- -> [D_s- -> [K0 -> K_L0] K- pi- pi+] gamma] "
+    "[D0 -> pi- K+ pi+ pi-]]"
+)
+# REAL with the radiative photons EvtGen can attach. The sample file has none,
+# but this is the shape of FSR/ISR/PHOTOS emission in the decay string.
+RADIATIVE = (
+    "Upsilon(4S) -> [B+ -> [J/psi -> e+ e- gammaP gammaI] K+ pi+ pi- gammaF] "
+    "[B- -> [D_s+ -> K+ K- pi+ [pi0 -> gamma gamma]] pi- K-]"
+)
 
 
 def frame(*strings: str | None) -> pl.DataFrame:
@@ -44,68 +61,67 @@ def test_public_api_is_exported() -> None:
 
 
 def test_count_decays_counts_occurrences() -> None:
-    out = frame(SIMPLE, TWO, None).with_columns(count_decays())
-    assert out["B+_count"].to_list() == [1, 2, 0]
+    out = frame(REAL, TWO_PI0, None).with_columns(count_decays(particle="pi0"))
+    assert out["pi0_count"].to_list() == [1, 2, 0]
 
 
 def test_count_decays_other_particle() -> None:
-    out = frame(NESTED).with_columns(count_decays(particle="B0"))
-    assert out["B0_count"].to_list() == [1]
+    out = frame(REAL).with_columns(count_decays(particle="B-"))
+    assert out["B-_count"].to_list() == [1]
 
 
 def test_add_decay_columns_adds_all_modes() -> None:
-    out = add_decay_columns(frame(SIMPLE))
+    out = add_decay_columns(frame(REAL))
     assert out.columns == [COL, "B+_final", "B+_prompt", "B+_raw"]
-    assert out["B+_final"].to_list() == ["B+ -> pi+ pi0 mu+ mu-"]
-    assert out["B+_prompt"].to_list() == ["B+ -> J/psi K+"]
-    assert out["B+_raw"].to_list() == [
-        "B+ -> [K+ -> pi+ pi0] [J/psi -> mu+ mu-]"
-    ]
+    assert out["B+_final"].to_list() == ["B+ -> K+ pi+ pi- e+ e-"]
+    assert out["B+_prompt"].to_list() == ["B+ -> J/psi K+ pi+ pi-"]
+    assert out["B+_raw"].to_list() == ["B+ -> [J/psi -> e+ e-] K+ pi+ pi-"]
 
 
 def test_add_decay_columns_keeps_the_block_verbatim() -> None:
-    assert column([SIMPLE]) == ["B+ -> [K+ -> pi+ pi0] [J/psi -> mu+ mu-]"]
+    assert column([REAL]) == ["B+ -> [J/psi -> e+ e-] K+ pi+ pi-"]
 
 
 def test_add_decay_columns_sorts_a_bracket_free_block() -> None:
-    decay = "[B+ -> pi+ K+]"
-    assert column([decay]) == ["B+ -> K+ pi+"]
-    assert column([decay], sort_daughters=False) == ["B+ -> pi+ K+"]
+    assert column([UNSORTED_D0], particle="D0") == ["D0 -> K+ pi- pi+ pi-"]
+    assert column([UNSORTED_D0], particle="D0", sort_daughters=False) == [
+        "D0 -> pi- K+ pi+ pi-"
+    ]
 
 
 def test_add_decay_columns_strips_all_photons_by_default() -> None:
-    assert column([FSR]) == ["B+ -> [K+ -> pi+ pi0] [J/psi -> mu+ mu-]"]
+    assert column([RADIATIVE]) == ["B+ -> [J/psi -> e+ e-] K+ pi+ pi-"]
 
 
 @pytest.mark.parametrize(
     ("ignore_isr", "ignore_fsr", "ignore_photos", "expected"),
     [
-        (False, True, True, "B+ -> [K+ -> pi+ pi0] [J/psi -> mu+ mu- gammaI]"),
-        (True, False, True, "B+ -> [K+ -> pi+ pi0 gammaF] [J/psi -> mu+ mu-]"),
-        (True, True, False, "B+ -> [K+ -> pi+ pi0] [J/psi -> mu+ mu- gammaP]"),
+        (False, True, True, "B+ -> [J/psi -> e+ e- gammaI] K+ pi+ pi-"),
+        (True, False, True, "B+ -> [J/psi -> e+ e-] K+ pi+ pi- gammaF"),
+        (True, True, False, "B+ -> [J/psi -> e+ e- gammaP] K+ pi+ pi-"),
         (
             False,
             False,
             True,
-            "B+ -> [K+ -> pi+ pi0 gammaF] [J/psi -> mu+ mu- gammaI]",
-        ),
-        (
-            True,
-            False,
-            False,
-            "B+ -> [K+ -> pi+ pi0 gammaF] [J/psi -> mu+ mu- gammaP]",
+            "B+ -> [J/psi -> e+ e- gammaI] K+ pi+ pi- gammaF",
         ),
         (
             False,
             True,
             False,
-            "B+ -> [K+ -> pi+ pi0] [J/psi -> mu+ mu- gammaP gammaI]",
+            "B+ -> [J/psi -> e+ e- gammaP gammaI] K+ pi+ pi-",
+        ),
+        (
+            True,
+            False,
+            False,
+            "B+ -> [J/psi -> e+ e- gammaP] K+ pi+ pi- gammaF",
         ),
         (
             False,
             False,
             False,
-            "B+ -> [K+ -> pi+ pi0 gammaF] [J/psi -> mu+ mu- gammaP gammaI]",
+            "B+ -> [J/psi -> e+ e- gammaP gammaI] K+ pi+ pi- gammaF",
         ),
     ],
 )
@@ -113,7 +129,7 @@ def test_add_decay_columns_keeps_only_the_selected_photons(
     ignore_isr, ignore_fsr, ignore_photos, expected
 ) -> None:
     assert column(
-        [FSR],
+        [RADIATIVE],
         ignore_isr=ignore_isr,
         ignore_fsr=ignore_fsr,
         ignore_photos=ignore_photos,
@@ -123,121 +139,139 @@ def test_add_decay_columns_keeps_only_the_selected_photons(
 @pytest.mark.parametrize(
     ("kwargs", "expected"),
     [
-        ({}, "B+ -> pi+ pi0 mu+ mu-"),
-        ({"ignore_isr": False}, "B+ -> pi+ pi0 mu+ mu- gammaI"),
-        ({"ignore_fsr": False}, "B+ -> pi+ pi0 mu+ mu- gammaF"),
-        ({"ignore_photos": False}, "B+ -> pi+ pi0 mu+ mu- gammaP"),
+        ({}, "B+ -> K+ pi+ pi- e+ e-"),
+        ({"ignore_isr": False}, "B+ -> K+ pi+ pi- e+ e- gammaI"),
+        ({"ignore_fsr": False}, "B+ -> K+ pi+ pi- e+ e- gammaF"),
+        ({"ignore_photos": False}, "B+ -> K+ pi+ pi- e+ e- gammaP"),
         (
             {"ignore_isr": False, "ignore_fsr": False, "ignore_photos": False},
-            "B+ -> pi+ pi0 mu+ mu- gammaF gammaP gammaI",
+            "B+ -> K+ pi+ pi- e+ e- gammaP gammaI gammaF",
         ),
     ],
 )
 def test_photon_toggles_apply_to_final(kwargs, expected) -> None:
-    assert column([FSR], "final", **kwargs) == [expected]
+    assert column([RADIATIVE], "final", **kwargs) == [expected]
 
 
-def test_photon_toggles_apply_to_prompt() -> None:
-    # prompt mode collapses K+ and J/psi, so their photons never show up
-    for kwargs in (
-        {},
-        {"ignore_isr": False},
-        {"ignore_fsr": False},
-        {"ignore_photos": False},
-        {"ignore_isr": False, "ignore_fsr": False, "ignore_photos": False},
-    ):
-        assert column([FSR], "prompt", **kwargs) == ["B+ -> J/psi K+"]
+@pytest.mark.parametrize(
+    ("kwargs", "expected"),
+    [
+        ({}, "B+ -> J/psi K+ pi+ pi-"),
+        ({"ignore_isr": False}, "B+ -> J/psi K+ pi+ pi-"),
+        ({"ignore_fsr": False}, "B+ -> J/psi K+ pi+ pi- gammaF"),
+        ({"ignore_photos": False}, "B+ -> J/psi K+ pi+ pi-"),
+        (
+            {"ignore_isr": False, "ignore_fsr": False, "ignore_photos": False},
+            "B+ -> J/psi K+ pi+ pi- gammaF",
+        ),
+    ],
+)
+def test_photon_toggles_apply_to_prompt(kwargs, expected) -> None:
+    # prompt mode collapses J/psi, so only the direct photon survives
+    assert column([RADIATIVE], "prompt", **kwargs) == [expected]
+
+
+def test_add_decay_columns_keeps_pi0_gammas() -> None:
+    # gammaI/gammaF/gammaP are radiative; gamma from pi0 -> gamma gamma is signal
+    assert column([REAL], "final", particle="B-") == [
+        "B- -> K+ K- K- pi+ pi- gamma gamma"
+    ]
 
 
 def test_add_decay_columns_prompt_lists_direct_daughters() -> None:
-    assert column([SIMPLE], "prompt") == ["B+ -> J/psi K+"]
-    assert column([SIMPLE], "prompt", sort_daughters=False) == ["B+ -> K+ J/psi"]
+    assert column([REAL], "prompt") == ["B+ -> J/psi K+ pi+ pi-"]
+    assert column([REAL], "prompt", particle="B-") == ["B- -> D_s+ K- pi-"]
+    assert column([REAL], "prompt", particle="B-", sort_daughters=False) == [
+        "B- -> D_s+ pi- K-"
+    ]
 
 
 def test_add_decay_columns_final_lists_leaves() -> None:
-    assert column([SIMPLE], "final") == ["B+ -> pi+ pi0 mu+ mu-"]
+    assert column([REAL], "final") == ["B+ -> K+ pi+ pi- e+ e-"]
 
 
 def test_add_decay_columns_final_keeps_stable_particles() -> None:
-    assert column(
-        [NESTED], "final", particle="B0", consider_as_stable=["D0"]
-    ) == ["B0 -> D0 pi- pi+"]
+    assert column([REAL], "final", particle="B-", consider_as_stable=["D_s+"]) == [
+        "B- -> D_s+ K- pi-"
+    ]
 
 
 def test_add_decay_columns_final_recurses_without_stable_particles() -> None:
-    assert column([NESTED], "final", particle="B0") == ["B0 -> K- pi+ pi- pi+"]
+    assert column([REAL], "final", particle="B-") == [
+        "B- -> K+ K- K- pi+ pi- gamma gamma"
+    ]
 
 
 def test_max_occurrences_creates_columns_and_pads_with_none() -> None:
-    out = add_decay_columns(frame(TWO, SIMPLE), modes=("raw",), max_occurrences=2)
-    assert out["B+_raw"].to_list() == [
-        "B+ -> [K+ -> pi+ pi0] J/psi",
-        "B+ -> [K+ -> pi+ pi0] [J/psi -> mu+ mu-]",
+    out = add_decay_columns(
+        frame(TWO_PI0, REAL), particle="pi0", modes=("raw",), max_occurrences=2
+    )
+    assert out["pi0_raw"].to_list() == [
+        "pi0 -> gamma gamma",
+        "pi0 -> gamma gamma",
     ]
-    assert out["B+_raw_2"].to_list() == [
-        "B+ -> [K+ -> pi+ pi0] [J/psi -> mu+ mu-]",
-        None,
-    ]
+    assert out["pi0_raw_2"].to_list() == ["pi0 -> gamma gamma", None]
 
 
 def test_max_occurrences_is_mode_major() -> None:
     out = add_decay_columns(
-        frame(TWO), modes=("raw", "prompt"), max_occurrences=2
+        frame(TWO_PI0), particle="pi0", modes=("raw", "prompt"), max_occurrences=2
     )
     assert out.columns == [
         COL,
-        "B+_raw",
-        "B+_raw_2",
-        "B+_prompt",
-        "B+_prompt_2",
+        "pi0_raw",
+        "pi0_raw_2",
+        "pi0_prompt",
+        "pi0_prompt_2",
     ]
-    assert out["B+_prompt"].to_list() == ["B+ -> J/psi K+"]
-    assert out["B+_prompt_2"].to_list() == ["B+ -> J/psi K+"]
+    assert out["pi0_prompt"].to_list() == ["pi0 -> gamma gamma"]
+    assert out["pi0_prompt_2"].to_list() == ["pi0 -> gamma gamma"]
 
 
 def test_max_occurrences_must_be_positive() -> None:
     with pytest.raises(ValueError, match="max_occurrences must be >= 1"):
-        add_decay_columns(frame(SIMPLE), modes=("raw",), max_occurrences=0)
+        add_decay_columns(frame(REAL), modes=("raw",), max_occurrences=0)
 
 
 def test_no_match_and_null_input_give_none() -> None:
-    out = add_decay_columns(frame("[B0 -> K+ pi-]", None), modes=("raw",))
+    no_b_plus = "Upsilon(4S) -> [B- -> [D_s+ -> K+ K- pi+ [pi0 -> gamma gamma]] pi- K-]"
+    out = add_decay_columns(frame(no_b_plus, None), modes=("raw",))
     assert out["B+_raw"].to_list() == [None, None]
 
 
 def test_modes_must_be_known_and_non_empty() -> None:
     with pytest.raises(ValueError, match="modes must not be empty"):
-        add_decay_columns(frame(SIMPLE), modes=())
+        add_decay_columns(frame(REAL), modes=())
     with pytest.raises(ValueError, match="unknown mode"):
-        add_decay_columns(frame(SIMPLE), modes=("final", "nope"))
+        add_decay_columns(frame(REAL), modes=("final", "nope"))
 
 
 def test_duplicate_modes_are_ignored() -> None:
-    out = add_decay_columns(frame(SIMPLE), modes=("final", "final"))
+    out = add_decay_columns(frame(REAL), modes=("final", "final"))
     assert out.columns == [COL, "B+_final"]
 
 
 def test_add_decay_columns_replaces_existing_variants() -> None:
-    df = frame(SIMPLE).with_columns(pl.lit("old").alias("B+_final"))
+    df = frame(REAL).with_columns(pl.lit("old").alias("B+_final"))
     out = add_decay_columns(df, modes=("final",))
     assert out.columns == [COL, "B+_final"]
-    assert out["B+_final"].to_list() == ["B+ -> pi+ pi0 mu+ mu-"]
+    assert out["B+_final"].to_list() == ["B+ -> K+ pi+ pi- e+ e-"]
 
 
 def test_add_decay_columns_does_not_clobber_a_temporary_name() -> None:
     df = pl.DataFrame(
         {
-            COL: [SIMPLE],
+            COL: [REAL],
             "__decaykit_parsed__": [42],
         }
     )
     out = add_decay_columns(df, modes=("final",))
     assert out["__decaykit_parsed__"].to_list() == [42]
-    assert out["B+_final"].to_list() == ["B+ -> pi+ pi0 mu+ mu-"]
+    assert out["B+_final"].to_list() == ["B+ -> K+ pi+ pi- e+ e-"]
 
 
 def test_multiprocessing_matches_single_worker() -> None:
-    strings = [SIMPLE, NESTED, TWO, FSR, None] * 4
+    strings = [REAL, TWO_PI0, UNSORTED_D0, RADIATIVE, None] * 4
     single = column(strings, "final", n_workers=1)
     multi = column(strings, "final", n_workers=2)
     assert single == multi
@@ -250,7 +284,8 @@ def test_rearrange_daughters_sorts_by_mass() -> None:
 
 def test_get_mass() -> None:
     assert get_mass("K+") == pytest.approx(493.677, abs=0.001)
-    assert get_mass("gammaF") == 0
+    for photon in ("gammaI", "gammaF", "gammaP"):
+        assert get_mass(photon) == 0
     assert get_mass("not_a_particle") == 0
 
 
