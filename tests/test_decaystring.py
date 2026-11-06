@@ -2,37 +2,10 @@ from concurrent.futures import ThreadPoolExecutor
 
 import polars as pl
 import pytest
+from decay_strings import COL, RADIATIVE, REAL, TWO_PI0, UNSORTED_D0
 
-from decaykit import (
-    add_decay_columns,
-    count_decays,
-    get_mass,
-    rearrange_daughters,
-)
-
-COL = "__MCDecayString__"
-
-# Real events from Belle_exp55_06_charged_tree_0.pq.
-REAL = (
-    "Upsilon(4S) -> [B+ -> [J/psi -> e+ e-] K+ pi+ pi-] "
-    "[B- -> [D_s+ -> K+ K- pi+ [pi0 -> gamma gamma]] pi- K-]"
-)
-TWO_PI0 = (
-    "Upsilon(4S) -> [B+ -> [anti-D0 -> K+ pi-] e+ nu_e] "
-    "[B- -> [D_s+ -> K+ K- pi+ [pi0 -> gamma gamma]] pi- K- "
-    "[pi0 -> gamma gamma]]"
-)
-UNSORTED_D0 = (
-    "Upsilon(4S) -> [B+ -> [anti-D0 -> K+ mu- anti-nu_mu] e+ nu_e] "
-    "[B- -> [D_s*- -> [D_s- -> [K0 -> K_L0] K- pi- pi+] gamma] "
-    "[D0 -> pi- K+ pi+ pi-]]"
-)
-# REAL with the radiative photons EvtGen can attach. The sample file has none,
-# but this is the shape of FSR/ISR/PHOTOS emission in the decay string.
-RADIATIVE = (
-    "Upsilon(4S) -> [B+ -> [J/psi -> e+ e- gammaP gammaI] K+ pi+ pi- gammaF] "
-    "[B- -> [D_s+ -> K+ K- pi+ [pi0 -> gamma gamma]] pi- K-]"
-)
+from decaykit import add_decay_columns, count_decays
+from decaykit.decaystring import _get_mass, _rearrange_daughters
 
 
 def frame(*strings: str | None) -> pl.DataFrame:
@@ -52,12 +25,7 @@ def column(
 def test_public_api_is_exported() -> None:
     import decaykit
 
-    assert set(decaykit.__all__) == {
-        "add_decay_columns",
-        "count_decays",
-        "get_mass",
-        "rearrange_daughters",
-    }
+    assert set(decaykit.__all__) == {"add_decay_columns", "count_decays"}
 
 
 def test_count_decays_counts_occurrences() -> None:
@@ -68,6 +36,17 @@ def test_count_decays_counts_occurrences() -> None:
 def test_count_decays_other_particle() -> None:
     out = frame(REAL).with_columns(count_decays(particle="B-"))
     assert out["B-_count"].to_list() == [1]
+
+
+def test_count_decays_ignores_unbalanced_blocks() -> None:
+    # an unterminated decay is not a complete block, so the count matches the
+    # None the parse columns give instead of the raw number of markers
+    unbalanced = "Upsilon(4S) -> [B+ -> K+ pi+ pi-"
+    out = add_decay_columns(frame(unbalanced), modes=("raw",)).with_columns(
+        count_decays(particle="B+")
+    )
+    assert out["B+_raw"].to_list() == [None]
+    assert out["B+_count"].to_list() == [0]
 
 
 def test_add_decay_columns_adds_all_modes() -> None:
@@ -278,30 +257,30 @@ def test_multiprocessing_matches_single_worker() -> None:
 
 
 def test_rearrange_daughters_sorts_by_mass() -> None:
-    assert rearrange_daughters("B+ --> pi+ K+") == "B+ --> K+ pi+"
-    assert rearrange_daughters("B+ -> pi+ K+", arrow_str="->") == "B+ -> K+ pi+"
+    assert _rearrange_daughters("B+ --> pi+ K+") == "B+ --> K+ pi+"
+    assert _rearrange_daughters("B+ -> pi+ K+", arrow_str="->") == "B+ -> K+ pi+"
 
 
 def test_get_mass() -> None:
-    assert get_mass("K+") == pytest.approx(493.677, abs=0.001)
+    assert _get_mass("K+") == pytest.approx(493.677, abs=0.001)
     for photon in ("gammaI", "gammaF", "gammaP"):
-        assert get_mass(photon) == 0
-    assert get_mass("not_a_particle") == 0
+        assert _get_mass(photon) == 0
+    assert _get_mass("not_a_particle") == 0
 
 
 def test_get_mass_handles_known_but_invalid_pdgid() -> None:
     # EvtGen's exotic X states map to PDGIDs that particle flags
     # is_valid=False, so from_pdgid raises InvalidParticle rather than
     # ParticleNotFound/MatchingIDNotFound; the lookup must still yield 0.
-    assert get_mass("Xsu") == 0
-    assert get_mass("anti-Xss") == 0
+    assert _get_mass("Xsu") == 0
+    assert _get_mass("anti-Xss") == 0
     assert column(["[B+ -> K+ Xsu]"], "prompt") == ["B+ -> K+ Xsu"]
 
 
 def test_get_mass_is_thread_safe() -> None:
     # particle's lazy lookup tables are not thread-safe, and polars evaluates
     # expressions in parallel; a race must not poison the cache with mass 0.
-    get_mass.cache_clear()
+    _get_mass.cache_clear()
     expected = {
         "J/psi": 3096.9,
         "K+": 493.677,
@@ -312,6 +291,6 @@ def test_get_mass_is_thread_safe() -> None:
     }
     names = list(expected) * 100
     with ThreadPoolExecutor(max_workers=8) as executor:
-        masses = list(executor.map(get_mass, names))
+        masses = list(executor.map(_get_mass, names))
     for name, mass in zip(names, masses, strict=True):
         assert mass == pytest.approx(expected[name], abs=0.01)

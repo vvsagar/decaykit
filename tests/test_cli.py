@@ -4,31 +4,9 @@ import numpy as np
 import polars as pl
 import pytest
 import uproot
+from decay_strings import COL, RADIATIVE, REAL, TWO_PI0, UNSORTED_D0
 
 from decaykit.cli import main
-
-COL = "__MCDecayString__"
-
-# Real events from Belle_exp55_06_charged_tree_0.pq.
-REAL = (
-    "Upsilon(4S) -> [B+ -> [J/psi -> e+ e-] K+ pi+ pi-] "
-    "[B- -> [D_s+ -> K+ K- pi+ [pi0 -> gamma gamma]] pi- K-]"
-)
-TWO_PI0 = (
-    "Upsilon(4S) -> [B+ -> [anti-D0 -> K+ pi-] e+ nu_e] "
-    "[B- -> [D_s+ -> K+ K- pi+ [pi0 -> gamma gamma]] pi- K- "
-    "[pi0 -> gamma gamma]]"
-)
-UNSORTED_D0 = (
-    "Upsilon(4S) -> [B+ -> [anti-D0 -> K+ mu- anti-nu_mu] e+ nu_e] "
-    "[B- -> [D_s*- -> [D_s- -> [K0 -> K_L0] K- pi- pi+] gamma] "
-    "[D0 -> pi- K+ pi+ pi-]]"
-)
-# REAL with the radiative photons EvtGen can attach.
-RADIATIVE = (
-    "Upsilon(4S) -> [B+ -> [J/psi -> e+ e- gammaP gammaI] K+ pi+ pi- gammaF] "
-    "[B- -> [D_s+ -> K+ K- pi+ [pi0 -> gamma gamma]] pi- K-]"
-)
 
 
 def write_input(tmp_path):

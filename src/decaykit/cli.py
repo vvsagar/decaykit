@@ -52,21 +52,28 @@ def _source(
     input: Path, tree: str | None, parser: argparse.ArgumentParser
 ) -> tuple[pl.LazyFrame, Path]:
     """Return the lazy input together with the output it defaults to."""
-    if input.suffix.lower() != ".root":
-        if tree is not None:
-            parser.error("-t/--tree applies only to .root inputs")
-        # Stream instead of materializing the whole file: only the decay column
-        # feeds the new expressions, and the other columns are passed through.
-        return pl.scan_parquet(input), input
+    suffix = input.suffix.lower()
+    if suffix == ".root":
+        if tree is None:
+            # A .root input is converted, never rewritten: write its sibling .pq.
+            with uproot.open(input) as f:
+                if _DEFAULT_TREE not in f:
+                    parser.error(
+                        f"{input} has no '{_DEFAULT_TREE}' tree: pass -t/--tree"
+                    )
+            tree = _DEFAULT_TREE
+        # Converted, never rewritten: name the sibling after its tree as well.
+        return pr.scan_root(str(input), tree), input.parent / f"{input.stem}_{tree}.pq"
 
-    if tree is None:
-        # A .root input is converted, never rewritten: write its sibling .pq.
-        with uproot.open(input) as f:
-            if _DEFAULT_TREE not in f:
-                parser.error(f"{input} has no '{_DEFAULT_TREE}' tree: pass -t/--tree")
-        tree = _DEFAULT_TREE
-    # Converted, never rewritten: name the sibling after its tree as well.
-    return pr.scan_root(str(input), tree), input.parent / f"{input.stem}_{tree}.pq"
+    if tree is not None:
+        parser.error("-t/--tree applies only to .root inputs")
+    if suffix not in (".parquet", ".pq"):
+        parser.error(
+            f"unsupported input: {input} (expected .parquet, .pq or .root)"
+        )
+    # Stream instead of materializing the whole file: only the decay column
+    # feeds the new expressions, and the other columns are passed through.
+    return pl.scan_parquet(input), input
 
 
 def main(argv: list[str] | None = None) -> None:

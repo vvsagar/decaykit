@@ -11,6 +11,7 @@ name is any run of characters that is neither a bracket nor whitespace.
 a ``polars.Expr`` for use in ``with_columns``.
 """
 
+import multiprocessing
 import re
 import threading
 from collections.abc import Callable, Sequence
@@ -49,7 +50,7 @@ _PHOTONS = frozenset(_PHOTON_ORDER)
 
 
 @cache
-def get_mass(evtgen_name: str, ignore_error: bool = True) -> float:
+def _get_mass(evtgen_name: str) -> float:
     """Return the mass of an EvtGen particle name, or ``0`` if it is unknown."""
     if evtgen_name in _PHOTONS:
         return 0
@@ -62,15 +63,13 @@ def get_mass(evtgen_name: str, ignore_error: bool = True) -> float:
         else:
             return mass
     except (InvalidParticle, ParticleNotFound, MatchingIDNotFound):
-        if not ignore_error:
-            print(f"mass not obtained for {evtgen_name}")
         return 0
 
 
-def rearrange_daughters(decay_str: str, arrow_str: str = "-->") -> str:
+def _rearrange_daughters(decay_str: str, arrow_str: str = "-->") -> str:
     mother = decay_str.split(arrow_str)[0]
     daughters = decay_str.split(arrow_str)[1].split()
-    daughters.sort(key=get_mass, reverse=True)
+    daughters.sort(key=_get_mass, reverse=True)
 
     return mother + arrow_str + " " + " ".join(daughters)
 
@@ -103,6 +102,39 @@ def _find_blocks(decay_str: str, particle: str, limit: int) -> list[str]:
                 blocks.append(decay_str[start + marker_len : close_at])
         start = decay_str.find(marker, pos)
     return blocks
+
+
+def _count_blocks(decay_str: str | None, particle: str) -> int:
+    """Count the complete decays of ``particle`` in ``decay_str``.
+
+    Mirrors the balanced-bracket scan of ``_find_blocks``: an occurrence of
+    ``[particle -> ...]`` whose brackets don't all close is never counted, so
+    the count always matches what ``add_decay_columns`` extracts.
+    """
+    if not decay_str:
+        return 0
+    count = 0
+    marker = f"[{particle} -> "
+    start = decay_str.find(marker)
+    while start != -1:
+        pos = start + len(marker)
+        depth = 1
+        while depth:
+            close_at = decay_str.find("]", pos)
+            if close_at == -1:  # unbalanced: no block for this marker
+                pos = len(decay_str)
+                break
+            open_at = decay_str.find("[", pos)
+            if open_at != -1 and open_at < close_at:
+                depth += 1
+                pos = open_at + 1
+                continue
+            depth -= 1
+            pos = close_at + 1
+            if depth == 0:
+                count += 1
+        start = decay_str.find(marker, pos)
+    return count
 
 
 def _skip_group(tokens: list[str], i: int) -> int:
@@ -239,7 +271,7 @@ def _assemble(
 ) -> str:
     """Format "particle -> d1 d2 ..." straight from the daughter names.
 
-    Equivalent to assembling the string and handing it to `rearrange_daughters`,
+    Equivalent to assembling the string and handing it to `_rearrange_daughters`,
     without splitting and re-joining it: the masses are looked up while sorting
     the names, and the ignored photons are dropped from the list.
     """
@@ -249,7 +281,7 @@ def _assemble(
         # and the daughters are single-spaced again when they are joined below
         daughters = [d for d in daughters if d not in ignored_photons]
     if sort_daughters and len(daughters) > 1:
-        daughters = sorted(daughters, key=get_mass, reverse=True)
+        daughters = sorted(daughters, key=_get_mass, reverse=True)
     return f"{particle} -> {' '.join(daughters)}"
 
 
@@ -265,7 +297,7 @@ def _raw_result(
     if ignored_photons:
         result = _strip_photons(result, ignored_photons)
     if sort_daughters and "[" not in result:
-        result = rearrange_daughters(result, arrow_str="->")
+        result = _rearrange_daughters(result, arrow_str="->")
     return result
 
 
@@ -348,7 +380,13 @@ def _map_with_workers(
             strings[i : i + _CHUNK_SIZE] for i in range(0, len(strings), _CHUNK_SIZE)
         ]
         worker = partial(_parse_chunk, parser, particle)
-        with ProcessPoolExecutor(max_workers=n_workers) as executor:
+        with ProcessPoolExecutor(
+            max_workers=n_workers,
+            # polars evaluates expressions in parallel threads, so the
+            # interpreter is multi-threaded here: fork can deadlock the child
+            # (e.g. on _MASS_LOCK), so fork fresh instead.
+            mp_context=multiprocessing.get_context("forkserver"),
+        ) as executor:
             rows = []
             for chunk in executor.map(worker, chunks):
                 rows.extend(chunk)
@@ -404,12 +442,21 @@ def count_decays(
     col_name: str = "__MCDecayString__",
     particle: str = "B+",
 ) -> pl.Expr:
-    """Return the number of decays of ``particle`` as '<particle>_count'."""
-    return (
-        pl.col(col_name)
-        .str.count_matches(f"[{particle} -> ", literal=True)
-        .fill_null(0)
-        .alias(f"{particle.replace('*', 'star')}_count")
+    """Return the number of decays of ``particle`` as '<particle>_count'.
+
+    The count is block-aware: it only counts occurrences of
+    ``[particle -> ...]`` whose brackets balance, so malformed input yields 0,
+    matching the ``None`` the parsed columns get.
+    """
+
+    def count(series: pl.Series) -> pl.Series:
+        return pl.Series(
+            [0 if s is None else _count_blocks(s, particle) for s in series],
+            dtype=pl.UInt32,
+        )
+
+    return pl.col(col_name).map_batches(count, return_dtype=pl.UInt32).alias(
+        f"{particle.replace('*', 'star')}_count"
     )
 
 
