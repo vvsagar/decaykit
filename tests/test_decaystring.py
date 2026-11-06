@@ -1,4 +1,5 @@
 from concurrent.futures import ThreadPoolExecutor
+from typing import Any
 
 import polars as pl
 import pytest
@@ -16,7 +17,7 @@ def column(
     strings: pl.Series | list[str | None],
     mode: str = "raw",
     particle: str = "B+",
-    **kwargs,
+    **kwargs: Any,
 ) -> list[str | None]:
     out = add_decay_columns(frame(*strings), modes=(mode,), particle=particle, **kwargs)
     return out[f"{particle.replace('*', 'star')}_{mode}"].to_list()
@@ -105,7 +106,7 @@ def test_add_decay_columns_strips_all_photons_by_default() -> None:
     ],
 )
 def test_add_decay_columns_keeps_only_the_selected_photons(
-    ignore_isr, ignore_fsr, ignore_photos, expected
+    ignore_isr: bool, ignore_fsr: bool, ignore_photos: bool, expected: str
 ) -> None:
     assert column(
         [RADIATIVE],
@@ -128,7 +129,9 @@ def test_add_decay_columns_keeps_only_the_selected_photons(
         ),
     ],
 )
-def test_photon_toggles_apply_to_final(kwargs, expected) -> None:
+def test_photon_toggles_apply_to_final(
+    kwargs: dict[str, Any], expected: str
+) -> None:
     assert column([RADIATIVE], "final", **kwargs) == [expected]
 
 
@@ -145,7 +148,9 @@ def test_photon_toggles_apply_to_final(kwargs, expected) -> None:
         ),
     ],
 )
-def test_photon_toggles_apply_to_prompt(kwargs, expected) -> None:
+def test_photon_toggles_apply_to_prompt(
+    kwargs: dict[str, Any], expected: str
+) -> None:
     # prompt mode collapses J/psi, so only the direct photon survives
     assert column([RADIATIVE], "prompt", **kwargs) == [expected]
 

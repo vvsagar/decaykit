@@ -24,6 +24,10 @@ from particle.exceptions import MatchingIDNotFound
 
 _CHUNK_SIZE = 50_000
 
+# A parser is ``_apply_parser_multi`` partially applied: it takes a decay
+# string and a particle name and returns one row per (mode, occurrence).
+type _Parser = Callable[[str, str], list[str | None]]
+
 # ``particle`` builds its EvtGen/PDGID lookup tables lazily, and those builds
 # are not thread-safe. Polars evaluates expressions in parallel threads, so
 # lookups must be serialized; results are cached, so the lock is only taken on
@@ -76,7 +80,7 @@ def _rearrange_daughters(decay_str: str, arrow_str: str = "-->") -> str:
 
 def _find_blocks(decay_str: str, particle: str, limit: int) -> list[str]:
     """Return the daughter blocks of the first ``limit`` decays, in string order."""
-    blocks = []
+    blocks: list[str] = []
     if not decay_str:
         return blocks
     marker = f"[{particle} -> "
@@ -360,14 +364,14 @@ def _apply_parser_multi(
 
 
 def _parse_chunk(
-    parser: Callable, particle: str, strings: list[str]
+    parser: _Parser, particle: str, strings: list[str]
 ) -> list[list[str | None]]:
     return [parser(s, particle) for s in strings]
 
 
 def _map_with_workers(
     series: pl.Series,
-    parser: Callable,
+    parser: _Parser,
     particle: str,
     n_workers: int,
     names: list[str],
