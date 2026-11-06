@@ -21,7 +21,7 @@ build:
   stage: build
   image: ghcr.io/astral-sh/uv:python3.12-bookworm-slim
   environment:
-    UV_LEGACY_TAR_BACKEND: "1"
+    - UV_LEGACY_TAR_BACKEND: "1"
   script:
     - uv build
     - uvx twine check dist/*
