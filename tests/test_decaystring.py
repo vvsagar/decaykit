@@ -1,3 +1,5 @@
+from concurrent.futures import ThreadPoolExecutor
+
 import polars as pl
 import pytest
 
@@ -132,3 +134,22 @@ def test_get_mass() -> None:
     assert get_mass("K+") == pytest.approx(493.677, abs=0.001)
     assert get_mass("gammaF") == 0
     assert get_mass("not_a_particle") == 0
+
+
+def test_get_mass_is_thread_safe() -> None:
+    # particle's lazy lookup tables are not thread-safe, and polars evaluates
+    # expressions in parallel; a race must not poison the cache with mass 0.
+    get_mass.cache_clear()
+    expected = {
+        "J/psi": 3096.9,
+        "K+": 493.677,
+        "pi+": 139.570,
+        "pi0": 134.977,
+        "mu+": 105.658,
+        "mu-": 105.658,
+    }
+    names = list(expected) * 100
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        masses = list(executor.map(get_mass, names))
+    for name, mass in zip(names, masses, strict=True):
+        assert mass == pytest.approx(expected[name], abs=0.01)

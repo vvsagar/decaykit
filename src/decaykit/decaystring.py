@@ -9,6 +9,7 @@ straight into ``DataFrame.with_columns``.
 """
 
 import re
+import threading
 from collections.abc import Callable
 from concurrent.futures import ProcessPoolExecutor
 from functools import cache, partial
@@ -18,6 +19,12 @@ from particle import Particle, ParticleNotFound
 from particle.exceptions import MatchingIDNotFound
 
 _CHUNK_SIZE = 50_000
+
+# ``particle`` builds its EvtGen/PDGID lookup tables lazily, and those builds
+# are not thread-safe. Polars evaluates expressions in parallel threads, so
+# lookups must be serialized; results are cached, so the lock is only taken on
+# the first lookup of each name.
+_MASS_LOCK = threading.Lock()
 
 # A decay string is a sequence of brackets and of names, where a name is a run
 # of characters that is neither a bracket nor whitespace -- the same delimiters
@@ -39,7 +46,8 @@ def get_mass(evtgen_name: str, ignore_error: bool = True) -> float:
         return 0
 
     try:
-        mass = Particle.from_evtgen_name(evtgen_name).mass
+        with _MASS_LOCK:
+            mass = Particle.from_evtgen_name(evtgen_name).mass
         if mass is None:
             return 0
         else:
