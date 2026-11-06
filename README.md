@@ -40,7 +40,7 @@ decaykit data.pq --no-sort                                # keep the input daugh
 decaykit data.pq --n-workers 8             # parse in 8 processes
 ```
 
-### library
+### As a Library:
 
 ```python
 import polars as pl
