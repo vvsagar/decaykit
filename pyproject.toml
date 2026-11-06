@@ -25,6 +25,7 @@ dependencies = [
     "particle>=1.0",
     "polars>=2.1.0",
     "polars-root[standard]>=0.2.0",
+    "uproot>=5.7",
 ]
 
 [project.urls]

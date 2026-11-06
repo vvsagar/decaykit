@@ -29,6 +29,9 @@ decaykit data.pq -o out.pq           # keep data.pq untouched
 decaykit data.pq --mode final --mode prompt
 decaykit data.pq --particle B0
 decaykit data.pq --n-workers 8       # parse in 8 processes
+decaykit mc.root -t tree_0           # read the ROOT tree, write mc.pq
+decaykit mc.root -t tree_0 -o out.pq # choose where the parquet goes
+decaykit vars.root                   # a 'variables' tree needs no -t
 ```
 
 ### library

@@ -227,6 +227,7 @@ dependencies = [
     { name = "particle" },
     { name = "polars" },
     { name = "polars-root", extra = ["standard"] },
+    { name = "uproot" },
 ]
 
 [package.dev-dependencies]
@@ -240,6 +241,7 @@ requires-dist = [
     { name = "particle", specifier = ">=1.0" },
     { name = "polars", specifier = ">=2.1.0" },
     { name = "polars-root", extras = ["standard"], specifier = ">=0.2.0" },
+    { name = "uproot", specifier = ">=5.7" },
 ]
 
 [package.metadata.requires-dev]
