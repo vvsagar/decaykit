@@ -40,13 +40,16 @@ _SKIP = frozenset({"]", "->"})
 # A token that can never be the name of a decayed daughter.
 _NON_NAME = frozenset({"[", "]", "->"})
 
-_FSR = frozenset({"gammaF", "gammaP", "gammaI"})
+# gammaI is ISR, gammaF is FSR and gammaP is PHOTOS. Their order here is also
+# the order in which the three ignore toggles are zipped together.
+_PHOTON_ORDER = ("gammaI", "gammaF", "gammaP")
+_PHOTONS = frozenset(_PHOTON_ORDER)
 
 
 @cache
 def get_mass(evtgen_name: str, ignore_error: bool = True) -> float:
     """Return the mass of an EvtGen particle name, or ``0`` if it is unknown."""
-    if evtgen_name == "gammaF":
+    if evtgen_name in _PHOTONS:
         return 0
 
     try:
@@ -206,41 +209,59 @@ def _both_daughters(
     return prompt, final
 
 
-def _strip_fsr(result: str) -> str:
-    """Remove the FSR/ISR photons from an assembled decay string."""
-    return result.replace(" gammaF", "").replace(" gammaP", "").replace(" gammaI", "")
+def _ignored_photons(
+    ignore_isr: bool, ignore_fsr: bool, ignore_photos: bool
+) -> frozenset[str]:
+    """Return the photon names selected by the three ignore toggles."""
+    flags = (ignore_isr, ignore_fsr, ignore_photos)
+    return frozenset(
+        name
+        for name, ignore in zip(_PHOTON_ORDER, flags, strict=True)
+        if ignore
+    )
+
+
+def _strip_photons(result: str, ignored_photons: frozenset[str]) -> str:
+    """Remove the selected photons from an assembled decay string."""
+    for name in _PHOTON_ORDER:
+        if name in ignored_photons:
+            result = result.replace(f" {name}", "")
+    return result
 
 
 def _assemble(
     particle: str,
     daughters: list[str],
-    ignore_fsr: bool,
+    ignored_photons: frozenset[str],
     sort_daughters: bool,
 ) -> str:
     """Format "particle -> d1 d2 ..." straight from the daughter names.
 
     Equivalent to assembling the string and handing it to `rearrange_daughters`,
     without splitting and re-joining it: the masses are looked up while sorting
-    the names, and the FSR photons are dropped from the list.
+    the names, and the ignored photons are dropped from the list.
     """
-    if ignore_fsr:
-        # dropping the names is what the string-level " gammaF" replacements did:
-        # every photon is removed, the space in front of it went with it, and the
-        # daughters are single-spaced again when they are joined below
-        daughters = [d for d in daughters if d not in _FSR]
+    if ignored_photons:
+        # dropping the names is what the string-level " gammaX" replacements did:
+        # every selected photon is removed, the space in front of it went with it,
+        # and the daughters are single-spaced again when they are joined below
+        daughters = [d for d in daughters if d not in ignored_photons]
     if sort_daughters and len(daughters) > 1:
         daughters = sorted(daughters, key=get_mass, reverse=True)
     return f"{particle} -> {' '.join(daughters)}"
 
 
 def _raw_result(
-    particle: str, block: str, ignore_fsr: bool, sort_daughters: bool
+    particle: str,
+    block: str,
+    ignored_photons: frozenset[str],
+    sort_daughters: bool,
 ) -> str:
     # the block is kept verbatim, so photons are removed from the string
     # and a bracket-free block is still sorted the old way
     result = f"{particle} -> {block}"
-    if ignore_fsr:
-        result = _strip_fsr(result)
+    if ignored_photons:
+        result = _strip_photons(result, ignored_photons)
     if sort_daughters and "[" not in result:
         result = rearrange_daughters(result, arrow_str="->")
     return result
@@ -251,7 +272,7 @@ def _apply_parser_multi(
     particle: str,
     modes: tuple[str, ...],
     stable: frozenset[str],
-    ignore_fsr: bool,
+    ignored_photons: frozenset[str],
     sort_daughters: bool,
     max_occurrences: int,
 ) -> list[str | None]:
@@ -270,7 +291,7 @@ def _apply_parser_multi(
     for block in blocks:
         if want_raw:
             columns["raw"].append(
-                _raw_result(particle, block, ignore_fsr, sort_daughters)
+                _raw_result(particle, block, ignored_photons, sort_daughters)
             )
         if want_prompt or want_final:
             prompt_parts: list[str] = []
@@ -286,11 +307,15 @@ def _apply_parser_multi(
                 final_parts = _final_daughters(block, stable)
             if want_prompt:
                 columns["prompt"].append(
-                    _assemble(particle, prompt_parts, ignore_fsr, sort_daughters)
+                    _assemble(
+                        particle, prompt_parts, ignored_photons, sort_daughters
+                    )
                 )
             if want_final:
                 columns["final"].append(
-                    _assemble(particle, final_parts, ignore_fsr, sort_daughters)
+                    _assemble(
+                        particle, final_parts, ignored_photons, sort_daughters
+                    )
                 )
 
     results: list[str | None] = []
@@ -338,7 +363,7 @@ def _parse_expr(
     particle: str,
     modes: tuple[str, ...],
     n_workers: int,
-    ignore_fsr: bool,
+    ignored_photons: frozenset[str],
     sort_daughters: bool,
     max_occurrences: int,
     stable: list[str] | None = None,
@@ -356,7 +381,7 @@ def _parse_expr(
         _apply_parser_multi,
         modes=modes,
         stable=frozenset(stable or ()),
-        ignore_fsr=ignore_fsr,
+        ignored_photons=ignored_photons,
         sort_daughters=sort_daughters,
         max_occurrences=max_occurrences,
     )
@@ -403,7 +428,9 @@ def add_decay_columns[FrameT: (pl.DataFrame, pl.LazyFrame)](
     particle: str = "B+",
     modes: Sequence[str] = ("final", "prompt", "raw"),
     n_workers: int = 1,
+    ignore_isr: bool = True,
     ignore_fsr: bool = True,
+    ignore_photos: bool = True,
     sort_daughters: bool = True,
     consider_as_stable: list[str] | None = None,
     max_occurrences: int = 1,
@@ -414,6 +441,11 @@ def add_decay_columns[FrameT: (pl.DataFrame, pl.LazyFrame)](
     columns appear in that order. The first ``max_occurrences`` decays of
     ``particle`` go into '<particle>_<mode>', '<particle>_<mode>_2', ...;
     columns without a matching decay are None.
+
+    Radiative photons are dropped by default: ``ignore_isr`` removes
+    ``gammaI`` (ISR), ``ignore_fsr`` removes ``gammaF`` (FSR) and
+    ``ignore_photos`` removes ``gammaP`` (PHOTOS). Set any of them to False to
+    keep that photon kind.
 
     Particles in ``consider_as_stable`` (e.g. ["pi0", "K_S0"]) are kept as-is
     in the ``final`` variant instead of expanding their decays.
@@ -426,7 +458,7 @@ def add_decay_columns[FrameT: (pl.DataFrame, pl.LazyFrame)](
         particle,
         _check_modes(modes),
         n_workers,
-        ignore_fsr,
+        _ignored_photons(ignore_isr, ignore_fsr, ignore_photos),
         sort_daughters,
         max_occurrences,
         stable=consider_as_stable,

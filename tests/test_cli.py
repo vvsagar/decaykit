@@ -9,6 +9,9 @@ from decaykit.cli import main
 
 COL = "__MCDecayString__"
 SIMPLE = "[B+ -> [K+ -> pi+ pi0] [J/psi -> mu+ mu-]]"
+NESTED = "[B0 -> [D*- -> [D0 -> K- pi+] pi-] pi+]"
+TWO = "[B+ -> [K+ -> pi+ pi0] J/psi] [B+ -> [K+ -> pi+ pi0] [J/psi -> mu+ mu-]]"
+FSR = "[B+ -> [K+ -> pi+ pi0 gammaF] [J/psi -> mu+ mu- gammaP gammaI]]"
 
 
 def write_input(tmp_path):
@@ -200,3 +203,98 @@ def test_interactive_overwrite_can_be_declined(tmp_path, monkeypatch):
         main([str(src), "-o", str(out)])
 
     assert out.read_bytes() == b"old"
+
+
+def test_column_selects_the_input_column(tmp_path):
+    column = "DecayString"
+    path = tmp_path / "in.parquet"
+    pl.DataFrame({column: [SIMPLE], "x": [1]}).write_parquet(path)
+
+    main([str(path), "--column", column, "--mode", "final"])
+
+    df = pl.read_parquet(path)
+    assert df.columns == [column, "x", "B+_final"]
+    assert df["B+_final"].to_list() == ["B+ -> pi+ pi0 mu+ mu-"]
+
+
+@pytest.mark.parametrize("flag", ["--stable", "--consider-as-stable"])
+def test_stable_particles_are_kept(tmp_path, flag):
+    path = tmp_path / "in.parquet"
+    pl.DataFrame({COL: [NESTED]}).write_parquet(path)
+
+    main([str(path), "--particle", "B0", "--mode", "final", flag, "D0"])
+
+    assert pl.read_parquet(path)["B0_final"].to_list() == ["B0 -> D0 pi- pi+"]
+
+
+def test_stable_requires_the_final_mode(tmp_path):
+    path = write_input(tmp_path)
+
+    with pytest.raises(SystemExit):
+        main([str(path), "--mode", "prompt", "--stable", "pi0"])
+
+
+def test_max_occurrences_adds_columns(tmp_path):
+    path = tmp_path / "in.parquet"
+    pl.DataFrame({COL: [TWO, SIMPLE]}).write_parquet(path)
+
+    main([str(path), "--mode", "raw", "--max-occurrences", "2"])
+
+    df = pl.read_parquet(path)
+    assert df["B+_raw"].to_list() == [
+        "B+ -> [K+ -> pi+ pi0] J/psi",
+        "B+ -> [K+ -> pi+ pi0] [J/psi -> mu+ mu-]",
+    ]
+    assert df["B+_raw_2"].to_list() == [
+        "B+ -> [K+ -> pi+ pi0] [J/psi -> mu+ mu-]",
+        None,
+    ]
+
+
+def test_max_occurrences_must_be_positive(tmp_path):
+    path = write_input(tmp_path)
+
+    with pytest.raises(SystemExit):
+        main([str(path), "--max-occurrences", "0"])
+
+
+@pytest.mark.parametrize(
+    ("flags", "expected"),
+    [
+        ([], "B+ -> [K+ -> pi+ pi0] [J/psi -> mu+ mu-]"),
+        (["--keep-isr"], "B+ -> [K+ -> pi+ pi0] [J/psi -> mu+ mu- gammaI]"),
+        (["--keep-fsr"], "B+ -> [K+ -> pi+ pi0 gammaF] [J/psi -> mu+ mu-]"),
+        (["--keep-photos"], "B+ -> [K+ -> pi+ pi0] [J/psi -> mu+ mu- gammaP]"),
+        (
+            ["--keep-isr", "--keep-fsr", "--keep-photos"],
+            "B+ -> [K+ -> pi+ pi0 gammaF] [J/psi -> mu+ mu- gammaP gammaI]",
+        ),
+    ],
+)
+def test_photon_flags_select_individual_photon_kinds(tmp_path, flags, expected):
+    path = tmp_path / "in.parquet"
+    pl.DataFrame({COL: [FSR]}).write_parquet(path)
+
+    main([str(path), "--mode", "raw", *flags])
+
+    assert pl.read_parquet(path)["B+_raw"].to_list() == [expected]
+
+
+def test_no_sort_preserves_daughter_order(tmp_path):
+    path = tmp_path / "in.parquet"
+    pl.DataFrame({COL: ["[B+ -> pi+ K+]"]}).write_parquet(path)
+
+    main([str(path), "--mode", "raw", "--no-sort"])
+
+    assert pl.read_parquet(path)["B+_raw"].to_list() == ["B+ -> pi+ K+"]
+
+
+def test_count_adds_a_count_column(tmp_path):
+    path = tmp_path / "in.parquet"
+    pl.DataFrame({COL: [TWO], "x": [1]}).write_parquet(path)
+
+    main([str(path), "--mode", "final", "--count"])
+
+    df = pl.read_parquet(path)
+    assert df.columns == [COL, "x", "B+_count", "B+_final"]
+    assert df["B+_count"].to_list() == [2]

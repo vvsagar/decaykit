@@ -73,14 +73,80 @@ def test_add_decay_columns_sorts_a_bracket_free_block() -> None:
     assert column([decay], sort_daughters=False) == ["B+ -> pi+ K+"]
 
 
-def test_add_decay_columns_strips_fsr_by_default() -> None:
+def test_add_decay_columns_strips_all_photons_by_default() -> None:
     assert column([FSR]) == ["B+ -> [K+ -> pi+ pi0] [J/psi -> mu+ mu-]"]
 
 
-def test_add_decay_columns_keeps_fsr_when_asked() -> None:
-    assert column([FSR], ignore_fsr=False) == [
-        "B+ -> [K+ -> pi+ pi0 gammaF] [J/psi -> mu+ mu- gammaP gammaI]"
-    ]
+@pytest.mark.parametrize(
+    ("ignore_isr", "ignore_fsr", "ignore_photos", "expected"),
+    [
+        (False, True, True, "B+ -> [K+ -> pi+ pi0] [J/psi -> mu+ mu- gammaI]"),
+        (True, False, True, "B+ -> [K+ -> pi+ pi0 gammaF] [J/psi -> mu+ mu-]"),
+        (True, True, False, "B+ -> [K+ -> pi+ pi0] [J/psi -> mu+ mu- gammaP]"),
+        (
+            False,
+            False,
+            True,
+            "B+ -> [K+ -> pi+ pi0 gammaF] [J/psi -> mu+ mu- gammaI]",
+        ),
+        (
+            True,
+            False,
+            False,
+            "B+ -> [K+ -> pi+ pi0 gammaF] [J/psi -> mu+ mu- gammaP]",
+        ),
+        (
+            False,
+            True,
+            False,
+            "B+ -> [K+ -> pi+ pi0] [J/psi -> mu+ mu- gammaP gammaI]",
+        ),
+        (
+            False,
+            False,
+            False,
+            "B+ -> [K+ -> pi+ pi0 gammaF] [J/psi -> mu+ mu- gammaP gammaI]",
+        ),
+    ],
+)
+def test_add_decay_columns_keeps_only_the_selected_photons(
+    ignore_isr, ignore_fsr, ignore_photos, expected
+) -> None:
+    assert column(
+        [FSR],
+        ignore_isr=ignore_isr,
+        ignore_fsr=ignore_fsr,
+        ignore_photos=ignore_photos,
+    ) == [expected]
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "expected"),
+    [
+        ({}, "B+ -> pi+ pi0 mu+ mu-"),
+        ({"ignore_isr": False}, "B+ -> pi+ pi0 mu+ mu- gammaI"),
+        ({"ignore_fsr": False}, "B+ -> pi+ pi0 mu+ mu- gammaF"),
+        ({"ignore_photos": False}, "B+ -> pi+ pi0 mu+ mu- gammaP"),
+        (
+            {"ignore_isr": False, "ignore_fsr": False, "ignore_photos": False},
+            "B+ -> pi+ pi0 mu+ mu- gammaF gammaP gammaI",
+        ),
+    ],
+)
+def test_photon_toggles_apply_to_final(kwargs, expected) -> None:
+    assert column([FSR], "final", **kwargs) == [expected]
+
+
+def test_photon_toggles_apply_to_prompt() -> None:
+    # prompt mode collapses K+ and J/psi, so their photons never show up
+    for kwargs in (
+        {},
+        {"ignore_isr": False},
+        {"ignore_fsr": False},
+        {"ignore_photos": False},
+        {"ignore_isr": False, "ignore_fsr": False, "ignore_photos": False},
+    ):
+        assert column([FSR], "prompt", **kwargs) == ["B+ -> J/psi K+"]
 
 
 def test_add_decay_columns_prompt_lists_direct_daughters() -> None:

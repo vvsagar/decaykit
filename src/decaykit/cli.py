@@ -10,7 +10,7 @@ import polars as pl
 import polars_root as pr
 import uproot
 
-from .decaystring import add_decay_columns
+from .decaystring import add_decay_columns, count_decays
 
 _MODES = ("final", "prompt", "raw")
 
@@ -106,9 +106,57 @@ def main(argv: list[str] | None = None) -> None:
         help="variant to add, repeatable (default: all of final, prompt, raw)",
     )
     parser.add_argument(
+        "--column",
+        default="__MCDecayString__",
+        help="decay-string column to read (default: __MCDecayString__)",
+    )
+    parser.add_argument(
         "--particle",
         default="B+",
         help="particle whose decay to extract (default: B+)",
+    )
+    parser.add_argument(
+        "--stable",
+        "--consider-as-stable",
+        dest="stable",
+        action="append",
+        help="particle to keep as a leaf in final mode, repeatable "
+        "(e.g. --stable pi0 --stable K_S0)",
+    )
+    parser.add_argument(
+        "--max-occurrences",
+        type=int,
+        default=1,
+        help="how many decays of the particle to extract (default: 1)",
+    )
+    parser.add_argument(
+        "--keep-isr",
+        action="store_false",
+        dest="ignore_isr",
+        help="keep gammaI (ISR) photons instead of stripping them",
+    )
+    parser.add_argument(
+        "--keep-fsr",
+        action="store_false",
+        dest="ignore_fsr",
+        help="keep gammaF (FSR) photons instead of stripping them",
+    )
+    parser.add_argument(
+        "--keep-photos",
+        action="store_false",
+        dest="ignore_photos",
+        help="keep gammaP (PHOTOS) photons instead of stripping them",
+    )
+    parser.add_argument(
+        "--no-sort",
+        action="store_false",
+        dest="sort_daughters",
+        help="keep daughter order from the decay string (default: sort by mass)",
+    )
+    parser.add_argument(
+        "--count",
+        action="store_true",
+        help="also add '<particle>_count'",
     )
     parser.add_argument(
         "--n-workers",
@@ -124,6 +172,12 @@ def main(argv: list[str] | None = None) -> None:
         parser.error(f"input file not found: {args.input}")
     if args.n_workers < 1:
         parser.error(f"--n-workers must be >= 1, got {args.n_workers}")
+    if args.max_occurrences < 1:
+        parser.error(
+            f"--max-occurrences must be >= 1, got {args.max_occurrences}"
+        )
+    if args.stable and "final" not in modes:
+        parser.error("--stable requires the final mode")
 
     lf, default_output = _source(args.input, args.tree, parser)
     output = args.output or default_output
@@ -134,11 +188,22 @@ def main(argv: list[str] | None = None) -> None:
     if not in_place:
         _confirm_overwrite(output, args.yes, parser)
 
+    if args.count:
+        lf = lf.with_columns(
+            count_decays(col_name=args.column, particle=args.particle)
+        )
     lf = add_decay_columns(
         lf,
+        col_name=args.column,
         particle=args.particle,
         modes=modes,
         n_workers=args.n_workers,
+        ignore_isr=args.ignore_isr,
+        ignore_fsr=args.ignore_fsr,
+        ignore_photos=args.ignore_photos,
+        sort_daughters=args.sort_daughters,
+        consider_as_stable=args.stable,
+        max_occurrences=args.max_occurrences,
     )
     _sink_parquet(lf, output)
     print(f"wrote {output}")
