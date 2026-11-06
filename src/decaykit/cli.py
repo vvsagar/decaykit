@@ -7,12 +7,12 @@ from pathlib import Path
 
 import polars as pl
 
-from .decaystring import extract_decay, extract_decay_final, extract_decay_prompt
+from .decaystring import extract_decay_final, extract_decay_prompt, extract_decay_raw
 
 _MODES = {
     "final": extract_decay_final,
     "prompt": extract_decay_prompt,
-    "decay": extract_decay,
+    "raw": extract_decay_raw,
 }
 
 
@@ -44,7 +44,7 @@ def main(argv: list[str] | None = None) -> None:
         "--mode",
         action="append",
         choices=list(_MODES),
-        help="variant to add, repeatable (default: all of final, prompt, decay)",
+        help="variant to add, repeatable (default: all of final, prompt, raw)",
     )
     parser.add_argument(
         "--particle",

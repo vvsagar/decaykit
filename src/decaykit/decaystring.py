@@ -4,7 +4,7 @@ A decay string looks like ``[B+ -> [K+ -> pi+ pi0] [J/psi -> mu+ mu-]]``:
 brackets group a decay, ``->`` separates a parent from its daughters, and a
 name is any run of characters that is neither a bracket nor whitespace.
 
-The ``extract_decay*`` functions return a ``polars.Expr`` that can be dropped
+The ``extract_decay_*`` functions return a ``polars.Expr`` that can be dropped
 straight into ``DataFrame.with_columns``.
 """
 
@@ -197,7 +197,7 @@ def _apply_parser(
 ) -> list[str | None]:
     results = []
     for block in _find_blocks(decay_str, particle, max_occurrences):
-        if mode == "decay":
+        if mode == "raw":
             # the block is kept verbatim, so photons are removed from the string
             # and a bracket-free block is still sorted the old way
             result = f"{particle} -> {block}"
@@ -300,7 +300,7 @@ def count_decays(
     )
 
 
-def extract_decay(
+def extract_decay_raw(
     col_name: str = "__MCDecayString__",
     particle: str = "B+",
     n_workers: int = 1,
@@ -310,13 +310,13 @@ def extract_decay(
 ) -> pl.Expr:
     """Return 'particle -> <raw block>' preserving the full daughter string as-is.
 
-    The first ``max_occurrences`` decays of ``particle`` go into '<particle>_decay',
-    '<particle>_decay_2', ...; columns without a matching decay are None.
+    The first ``max_occurrences`` decays of ``particle`` go into '<particle>_raw',
+    '<particle>_raw_2', ...; columns without a matching decay are None.
     """
     return _expr(
         col_name,
         particle,
-        "decay",
+        "raw",
         n_workers,
         ignore_fsr,
         sort_daughters,

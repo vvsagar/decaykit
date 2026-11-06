@@ -19,11 +19,11 @@ def test_in_place_adds_all_modes(tmp_path):
     main([str(path)])
 
     df = pl.read_parquet(path)
-    assert df.columns == [COL, "x", "B+_final", "B+_prompt", "B+_decay"]
+    assert df.columns == [COL, "x", "B+_final", "B+_prompt", "B+_raw"]
     assert df["x"].to_list() == [1]
     assert df["B+_final"].to_list() == ["B+ -> pi+ pi0 mu+ mu-"]
     assert df["B+_prompt"].to_list() == ["B+ -> J/psi K+"]
-    assert df["B+_decay"].to_list() == ["B+ -> [K+ -> pi+ pi0] [J/psi -> mu+ mu-]"]
+    assert df["B+_raw"].to_list() == ["B+ -> [K+ -> pi+ pi0] [J/psi -> mu+ mu-]"]
 
 
 def test_output_keeps_input_untouched(tmp_path):
@@ -45,7 +45,7 @@ def test_mode_selects_variants(tmp_path):
     df = pl.read_parquet(path)
     assert "B+_final" in df.columns
     assert "B+_prompt" in df.columns
-    assert "B+_decay" not in df.columns
+    assert "B+_raw" not in df.columns
 
 
 def test_particle_is_configurable(tmp_path):
