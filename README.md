@@ -12,9 +12,11 @@ into flat columns for the decays of the particle you ask for: its direct daughte
 
 ## Install
 
+Not on PyPI yet; install from the DESY GitLab:
+
 ```bash
-pip install decaykit
-# or: uv add decaykit --active
+pip install 'git+ssh://git@gitlab.desy.de/vidya.vobbilisetti/decaykit.git'
+# or uv add 'git+ssh://git@gitlab.desy.de/vidya.vobbilisetti/decaykit.git'
 ```
 
 ## Usage

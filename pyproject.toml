@@ -3,6 +3,8 @@ name = "decaykit"
 version = "0.1.0"
 description = "Parse EvtGen decay strings into Polars data frames"
 readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
 authors = [
     { name = "Vidya Sagar VOBBILISETTI", email = "mail@vidyasagarv.com" }
 ]
