@@ -1,0 +1,54 @@
+[project]
+name = "decaykit"
+version = "0.1.0"
+description = "Parse EvtGen decay strings into Polars data frames"
+readme = "README.md"
+authors = [
+    { name = "Vidya Sagar VOBBILISETTI", email = "mail@vidyasagarv.com" }
+]
+requires-python = ">=3.12"
+keywords = [
+    "decay",
+    "evtgen",
+    "hep",
+    "particle-physics",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Physics",
+    "Typing :: Typed",
+]
+dependencies = [
+    "particle>=1.0",
+    "polars>=2.1.0",
+    "polars-root[standard]>=0.2.0",
+]
+
+[project.urls]
+Homepage = "https://gitlab.desy.de/vidya.vobbilisetti/decaykit"
+Repository = "https://gitlab.desy.de/vidya.vobbilisetti/decaykit"
+Issues = "https://gitlab.desy.de/vidya.vobbilisetti/decaykit/-/issues"
+
+[build-system]
+requires = ["uv_build>=0.13.6,<0.14.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.2.0",
+    "ruff>=0.17.4",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 88
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
