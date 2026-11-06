@@ -516,11 +516,10 @@ def add_decay_columns[FrameT: (pl.DataFrame, pl.LazyFrame)](
         max_occurrences,
         stable=consider_as_stable,
     )
-    existing = set(
-        frame.collect_schema().names()
-        if isinstance(frame, pl.LazyFrame)
-        else frame.columns
-    )
+    if isinstance(frame, pl.LazyFrame):
+        existing = set(frame.collect_schema().names())
+    else:
+        existing = set(frame.columns)
     tmp = "__decaykit_parsed__"
     while tmp in existing:
         tmp = f"_{tmp}"
