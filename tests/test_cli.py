@@ -32,7 +32,7 @@ class FakeTTY(io.StringIO):
 def test_in_place_adds_all_modes(tmp_path):
     path = write_input(tmp_path)
 
-    main([str(path), "-y"])
+    main([str(path)])
 
     df = pl.read_parquet(path)
     assert df.columns == [COL, "x", "B+_final", "B+_prompt", "B+_raw"]
@@ -56,7 +56,7 @@ def test_output_keeps_input_untouched(tmp_path):
 def test_mode_selects_variants(tmp_path):
     path = write_input(tmp_path)
 
-    main([str(path), "-y", "--mode", "final", "--mode", "prompt"])
+    main([str(path), "--mode", "final", "--mode", "prompt"])
 
     df = pl.read_parquet(path)
     assert "B+_final" in df.columns
@@ -67,7 +67,7 @@ def test_mode_selects_variants(tmp_path):
 def test_particle_is_configurable(tmp_path):
     path = write_input(tmp_path)
 
-    main([str(path), "-y", "--mode", "final", "--particle", "J/psi"])
+    main([str(path), "--mode", "final", "--particle", "J/psi"])
 
     assert "J/psi_final" in pl.read_parquet(path).columns
 
@@ -75,7 +75,7 @@ def test_particle_is_configurable(tmp_path):
 def test_n_workers_matches_single_worker(tmp_path):
     path = write_input(tmp_path)
 
-    main([str(path), "-y", "--n-workers", "2"])
+    main([str(path), "--n-workers", "2"])
 
     df = pl.read_parquet(path)
     assert df["B+_final"].to_list() == ["B+ -> pi+ pi0 mu+ mu-"]
@@ -94,7 +94,7 @@ def test_root_input_writes_sibling_parquet(tmp_path):
 
     main([str(path), "-t", "tree"])
 
-    df = pl.read_parquet(path.parent / f"{path.stem}.tree.pq")
+    df = pl.read_parquet(path.parent / f"{path.stem}_tree.pq")
     assert df.columns == [COL, "x", "B+_final", "B+_prompt", "B+_raw"]
     assert df[COL].to_list() == [SIMPLE]
     assert df["B+_final"].to_list() == ["B+ -> pi+ pi0 mu+ mu-"]
@@ -109,7 +109,7 @@ def test_root_input_can_choose_output(tmp_path):
     main([str(path), "--tree", "tree", "-o", str(out)])
 
     assert "B+_final" in pl.read_parquet(out).columns
-    assert not (path.parent / f"{path.stem}.tree.pq").exists()
+    assert not (path.parent / f"{path.stem}_tree.pq").exists()
 
 
 def test_root_input_requires_a_tree(tmp_path):
@@ -126,7 +126,7 @@ def test_root_input_defaults_to_variables_tree(tmp_path):
 
     assert (
         "B+_prompt"
-        in pl.read_parquet(path.parent / f"{path.stem}.variables.pq").columns
+        in pl.read_parquet(path.parent / f"{path.stem}_variables.pq").columns
     )
 
 
@@ -148,14 +148,25 @@ def test_existing_output_needs_confirmation_without_a_tty(tmp_path):
     assert out.read_bytes() == b"old"
 
 
-def test_in_place_run_needs_confirmation_without_a_tty(tmp_path):
+def test_in_place_run_needs_no_confirmation(tmp_path):
     path = write_input(tmp_path)
-    before = path.read_bytes()
+
+    # No -o: the rewrite is the documented default, so no prompt even
+    # without a terminal to ask on.
+    main([str(path)])
+
+    assert "B+_final" in pl.read_parquet(path).columns
+
+
+def test_root_default_output_asks_when_it_exists(tmp_path):
+    path = write_root(tmp_path)
+    out = path.parent / f"{path.stem}_tree.pq"
+    out.write_bytes(b"old")
 
     with pytest.raises(SystemExit):
-        main([str(path)])
+        main([str(path), "-t", "tree"])
 
-    assert path.read_bytes() == before
+    assert out.read_bytes() == b"old"
 
 
 def test_yes_overwrites_without_asking(tmp_path):

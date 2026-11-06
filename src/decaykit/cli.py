@@ -89,7 +89,7 @@ def main(argv: list[str] | None = None) -> None:
         "--output",
         type=Path,
         help="output parquet file (default: rewrite a parquet input in place; "
-        "a .root input becomes <input>.<tree>.pq)",
+        "a .root input becomes <input>_<tree>.pq)",
     )
     parser.add_argument(
         "-y",
@@ -131,7 +131,12 @@ def main(argv: list[str] | None = None) -> None:
 
     lf, default_output = _source(args.input, args.tree, parser)
     output = args.output or default_output
-    _confirm_overwrite(output, args.yes, parser)
+    # An in-place parquet rewrite (no -o) is the documented default: never ask.
+    # Everything else -- -o with either input type, and every .root conversion --
+    # writes a file that may already exist, so confirm first.
+    in_place = output == args.input and args.input.suffix.lower() != ".root"
+    if not in_place:
+        _confirm_overwrite(output, args.yes, parser)
 
     lf = lf.with_columns(
         *[

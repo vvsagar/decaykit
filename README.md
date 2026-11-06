@@ -24,9 +24,9 @@ pip install decaykit
 ### CLI:
 
 ```bash
-decaykit data.pq                     # rewrite data.pq in place (asks first)
-decaykit data.pq -y                  # ... skip the overwrite confirmation
-decaykit data.pq -o out.pq           # keep data.pq untouched
+decaykit data.pq                     # rewrite data.pq in place
+decaykit data.pq -o out.pq           # keep data.pq untouched; asks if out.pq exists
+decaykit data.pq -o out.pq -y        # ... skip that confirmation
 decaykit data.pq --mode final --mode prompt
 decaykit data.pq --particle B0
 decaykit data.pq --n-workers 8       # parse in 8 processes
