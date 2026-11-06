@@ -1,3 +1,5 @@
+import io
+
 import numpy as np
 import polars as pl
 import pytest
@@ -22,10 +24,15 @@ def write_root(tmp_path, tree="tree"):
     return path
 
 
+class FakeTTY(io.StringIO):
+    def isatty(self):
+        return True
+
+
 def test_in_place_adds_all_modes(tmp_path):
     path = write_input(tmp_path)
 
-    main([str(path)])
+    main([str(path), "-y"])
 
     df = pl.read_parquet(path)
     assert df.columns == [COL, "x", "B+_final", "B+_prompt", "B+_raw"]
@@ -49,7 +56,7 @@ def test_output_keeps_input_untouched(tmp_path):
 def test_mode_selects_variants(tmp_path):
     path = write_input(tmp_path)
 
-    main([str(path), "--mode", "final", "--mode", "prompt"])
+    main([str(path), "-y", "--mode", "final", "--mode", "prompt"])
 
     df = pl.read_parquet(path)
     assert "B+_final" in df.columns
@@ -60,7 +67,7 @@ def test_mode_selects_variants(tmp_path):
 def test_particle_is_configurable(tmp_path):
     path = write_input(tmp_path)
 
-    main([str(path), "--mode", "final", "--particle", "J/psi"])
+    main([str(path), "-y", "--mode", "final", "--particle", "J/psi"])
 
     assert "J/psi_final" in pl.read_parquet(path).columns
 
@@ -68,7 +75,7 @@ def test_particle_is_configurable(tmp_path):
 def test_n_workers_matches_single_worker(tmp_path):
     path = write_input(tmp_path)
 
-    main([str(path), "--n-workers", "2"])
+    main([str(path), "-y", "--n-workers", "2"])
 
     df = pl.read_parquet(path)
     assert df["B+_final"].to_list() == ["B+ -> pi+ pi0 mu+ mu-"]
@@ -87,7 +94,7 @@ def test_root_input_writes_sibling_parquet(tmp_path):
 
     main([str(path), "-t", "tree"])
 
-    df = pl.read_parquet(path.with_suffix(".pq"))
+    df = pl.read_parquet(path.parent / f"{path.stem}.tree.pq")
     assert df.columns == [COL, "x", "B+_final", "B+_prompt", "B+_raw"]
     assert df[COL].to_list() == [SIMPLE]
     assert df["B+_final"].to_list() == ["B+ -> pi+ pi0 mu+ mu-"]
@@ -102,7 +109,7 @@ def test_root_input_can_choose_output(tmp_path):
     main([str(path), "--tree", "tree", "-o", str(out)])
 
     assert "B+_final" in pl.read_parquet(out).columns
-    assert not path.with_suffix(".pq").exists()
+    assert not (path.parent / f"{path.stem}.tree.pq").exists()
 
 
 def test_root_input_requires_a_tree(tmp_path):
@@ -117,7 +124,10 @@ def test_root_input_defaults_to_variables_tree(tmp_path):
 
     main([str(path)])
 
-    assert "B+_prompt" in pl.read_parquet(path.with_suffix(".pq")).columns
+    assert (
+        "B+_prompt"
+        in pl.read_parquet(path.parent / f"{path.stem}.variables.pq").columns
+    )
 
 
 def test_tree_is_rejected_for_parquet_input(tmp_path):
@@ -125,3 +135,57 @@ def test_tree_is_rejected_for_parquet_input(tmp_path):
 
     with pytest.raises(SystemExit):
         main([str(path), "-t", "tree"])
+
+
+def test_existing_output_needs_confirmation_without_a_tty(tmp_path):
+    src = write_input(tmp_path)
+    out = tmp_path / "out.parquet"
+    out.write_bytes(b"old")
+
+    with pytest.raises(SystemExit):
+        main([str(src), "-o", str(out)])
+
+    assert out.read_bytes() == b"old"
+
+
+def test_in_place_run_needs_confirmation_without_a_tty(tmp_path):
+    path = write_input(tmp_path)
+    before = path.read_bytes()
+
+    with pytest.raises(SystemExit):
+        main([str(path)])
+
+    assert path.read_bytes() == before
+
+
+def test_yes_overwrites_without_asking(tmp_path):
+    src = write_input(tmp_path)
+    out = tmp_path / "out.parquet"
+    out.write_bytes(b"old")
+
+    main([str(src), "-o", str(out), "--yes"])
+
+    assert "B+_final" in pl.read_parquet(out).columns
+
+
+def test_interactive_overwrite_can_be_accepted(tmp_path, monkeypatch):
+    src = write_input(tmp_path)
+    out = tmp_path / "out.parquet"
+    out.write_bytes(b"old")
+    monkeypatch.setattr("sys.stdin", FakeTTY("y\n"))
+
+    main([str(src), "-o", str(out)])
+
+    assert "B+_final" in pl.read_parquet(out).columns
+
+
+def test_interactive_overwrite_can_be_declined(tmp_path, monkeypatch):
+    src = write_input(tmp_path)
+    out = tmp_path / "out.parquet"
+    out.write_bytes(b"old")
+    monkeypatch.setattr("sys.stdin", FakeTTY("n\n"))
+
+    with pytest.raises(SystemExit):
+        main([str(src), "-o", str(out)])
+
+    assert out.read_bytes() == b"old"

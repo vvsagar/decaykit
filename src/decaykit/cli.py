@@ -2,6 +2,7 @@
 
 import argparse
 import os
+import sys
 import tempfile
 from pathlib import Path
 
@@ -34,6 +35,23 @@ def _sink_parquet(lf: pl.LazyFrame, path: Path) -> None:
         raise
 
 
+def _confirm_overwrite(
+    path: Path, assume_yes: bool, parser: argparse.ArgumentParser
+) -> None:
+    """Ask before clobbering an existing output, unless -y was given."""
+    if assume_yes or not path.exists():
+        return
+    if sys.stdin is None or not sys.stdin.isatty():
+        # No terminal to ask: refuse instead of silently clobbering.
+        parser.error(f"output exists: {path} (pass -y to overwrite)")
+    try:
+        answer = input(f"{path} exists. Overwrite? [y/N] ")
+    except EOFError:
+        parser.error(f"output exists: {path} (pass -y to overwrite)")
+    if answer.strip().lower() not in ("y", "yes"):
+        parser.exit(1, "aborted\n")
+
+
 def _source(
     input: Path, tree: str | None, parser: argparse.ArgumentParser
 ) -> tuple[pl.LazyFrame, Path]:
@@ -51,7 +69,8 @@ def _source(
             if _DEFAULT_TREE not in f:
                 parser.error(f"{input} has no '{_DEFAULT_TREE}' tree: pass -t/--tree")
         tree = _DEFAULT_TREE
-    return pr.scan_root(str(input), tree), input.with_suffix(".pq")
+    # Converted, never rewritten: name the sibling after its tree as well.
+    return pr.scan_root(str(input), tree), input.parent / f"{input.stem}_{tree}.pq"
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -70,7 +89,13 @@ def main(argv: list[str] | None = None) -> None:
         "--output",
         type=Path,
         help="output parquet file (default: rewrite a parquet input in place; "
-        "a .root input becomes <input>.pq)",
+        "a .root input becomes <input>.<tree>.pq)",
+    )
+    parser.add_argument(
+        "-y",
+        "--yes",
+        action="store_true",
+        help="overwrite an existing output file without asking",
     )
     parser.add_argument(
         "-t",
@@ -106,6 +131,7 @@ def main(argv: list[str] | None = None) -> None:
 
     lf, default_output = _source(args.input, args.tree, parser)
     output = args.output or default_output
+    _confirm_overwrite(output, args.yes, parser)
 
     lf = lf.with_columns(
         *[
