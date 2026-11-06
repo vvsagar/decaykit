@@ -1,5 +1,6 @@
 stages:
   - test
+  - build
 
 test:
   stage: test
@@ -15,3 +16,13 @@ test:
     - uv run ruff check src tests
     - uv run mypy
     - uv run pytest
+
+build:
+  stage: build
+  image: ghcr.io/astral-sh/uv:python3.12-bookworm-slim
+  script:
+    - uv build
+    - uvx twine check dist/*
+  artifacts:
+    paths:
+      - dist/

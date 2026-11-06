@@ -49,13 +49,19 @@ dev = [
     "ruff>=0.17.4",
 ]
 
-[tool.pytest.ini_options]
+[tool.pytest]
+filterwarnings = ["error"]
+addopts = ["-ra", "-q"]
+strict = true
+log_level = "INFO"
+minversion = "9"
 testpaths = ["tests"]
-addopts = "-q"
 
 [tool.mypy]
 strict = true
 files = ["src", "tests"]
+enable_error_code = ["ignore-without-code", "redundant-expr", "truthy-bool"]
+warn_unreachable = true
 
 # uproot ships no py.typed marker or stubs.
 [[tool.mypy.overrides]]
@@ -64,7 +70,6 @@ ignore_missing_imports = true
 
 [tool.ruff]
 line-length = 88
-target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
