@@ -70,10 +70,21 @@ def _get_mass(evtgen_name: str) -> float:
         return 0
 
 
+def _sort_key(evtgen_name: str) -> tuple[float, str]:
+    """Order daughters by decreasing mass, breaking ties by name.
+
+    Charge conjugates share their mass (pi+/pi-, K+/K-, D0/anti-D0) and every
+    name unknown to ``particle`` has mass 0, so a mass-only key keeps whatever
+    order the generator wrote those daughters in and the same decay mode comes
+    out as several strings. The name makes the order total, one mode one string.
+    """
+    return (-_get_mass(evtgen_name), evtgen_name)
+
+
 def _rearrange_daughters(decay_str: str, arrow_str: str = "-->") -> str:
     mother = decay_str.split(arrow_str)[0]
     daughters = decay_str.split(arrow_str)[1].split()
-    daughters.sort(key=_get_mass, reverse=True)
+    daughters.sort(key=_sort_key)
 
     return mother + arrow_str + " " + " ".join(daughters)
 
@@ -285,7 +296,7 @@ def _assemble(
         # and the daughters are single-spaced again when they are joined below
         daughters = [d for d in daughters if d not in ignored_photons]
     if sort_daughters and len(daughters) > 1:
-        daughters = sorted(daughters, key=_get_mass, reverse=True)
+        daughters = sorted(daughters, key=_sort_key)
     return f"{particle} -> {' '.join(daughters)}"
 
 
@@ -499,6 +510,9 @@ def add_decay_columns[FrameT: (pl.DataFrame, pl.LazyFrame)](
     ``gammaI`` (ISR), ``ignore_fsr`` removes ``gammaF`` (FSR) and
     ``ignore_photos`` removes ``gammaP`` (PHOTOS). Set any of them to False to
     keep that photon kind.
+
+    ``sort_daughters`` orders the daughters of every decay by decreasing mass,
+    ties broken by name, so that one decay mode always gives one string.
 
     Particles in ``consider_as_stable`` (e.g. ["pi0", "K_S0"]) are kept as-is
     in the ``final`` variant instead of expanding their decays.

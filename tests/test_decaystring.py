@@ -63,7 +63,8 @@ def test_add_decay_columns_keeps_the_block_verbatim() -> None:
 
 
 def test_add_decay_columns_sorts_a_bracket_free_block() -> None:
-    assert column([UNSORTED_D0], particle="D0") == ["D0 -> K+ pi- pi+ pi-"]
+    # equal masses are ordered by name, so the two pi- keep a canonical place
+    assert column([UNSORTED_D0], particle="D0") == ["D0 -> K+ pi+ pi- pi-"]
     assert column([UNSORTED_D0], particle="D0", sort_daughters=False) == [
         "D0 -> pi- K+ pi+ pi-"
     ]
@@ -125,7 +126,8 @@ def test_add_decay_columns_keeps_only_the_selected_photons(
         ({"ignore_photos": False}, "B+ -> K+ pi+ pi- e+ e- gammaP"),
         (
             {"ignore_isr": False, "ignore_fsr": False, "ignore_photos": False},
-            "B+ -> K+ pi+ pi- e+ e- gammaP gammaI gammaF",
+            # photons have mass 0, so the kept ones are ordered by their name
+            "B+ -> K+ pi+ pi- e+ e- gammaF gammaI gammaP",
         ),
     ],
 )
@@ -264,6 +266,26 @@ def test_multiprocessing_matches_single_worker() -> None:
 def test_rearrange_daughters_sorts_by_mass() -> None:
     assert _rearrange_daughters("B+ --> pi+ K+") == "B+ --> K+ pi+"
     assert _rearrange_daughters("B+ -> pi+ K+", arrow_str="->") == "B+ -> K+ pi+"
+
+
+def test_rearrange_daughters_breaks_mass_ties_by_name() -> None:
+    # pi+ and pi- have the same mass, so their order in the string must not
+    # survive: only a total order gives one string per decay mode
+    assert _rearrange_daughters("B+ --> pi- K+ pi+ pi-") == "B+ --> K+ pi+ pi- pi-"
+    assert _rearrange_daughters(
+        "B+ --> pi+ K+ pi- pi-"
+    ) == _rearrange_daughters("B+ --> pi- K+ pi+ pi-")
+
+
+def test_sort_daughters_collapses_permutations() -> None:
+    permutations = [
+        "[eta_c -> pi+ eta' pi-]",
+        "[eta_c -> pi- eta' pi+]",
+        "[eta_c -> eta' pi+ pi-]",
+        "[eta_c -> pi+ pi- eta']",
+    ]
+    # one mode, whatever order the generator recorded the daughters in
+    assert len(set(column(permutations, "prompt", particle="eta_c"))) == 1
 
 
 def test_get_mass() -> None:
