@@ -1,3 +1,4 @@
+from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
@@ -14,7 +15,7 @@ def frame(*strings: str | None) -> pl.DataFrame:
 
 
 def column(
-    strings: pl.Series | list[str | None],
+    strings: pl.Series | Sequence[str | None],
     mode: str = "raw",
     particle: str = "B+",
     **kwargs: Any,
